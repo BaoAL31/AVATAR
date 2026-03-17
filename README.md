@@ -1,1 +1,1 @@
-# AVATAR-Audio-Visual-Attribution-Transcription-And-Recognition
+# AVATAR: Audio-Visual Attribution Transcription And Recognition
