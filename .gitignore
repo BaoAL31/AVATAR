@@ -6,6 +6,9 @@ data/
 *.pth
 *.pt
 
+# save files
+*.save
+
 # python
 __pycache__/
 *.pyc
