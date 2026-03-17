@@ -1,0 +1,20 @@
+# cloned model repos
+models/LR-ASD/
+models/DyViSE/
+
+# data
+data/
+
+# model weights
+*.model
+*.pth
+*.pt
+
+# python
+__pycache__/
+*.pyc
+.env/
+
+# experiments
+experiments/logs/
+experiments/results/
