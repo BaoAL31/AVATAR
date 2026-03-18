@@ -1,4 +1,4 @@
-import face-alignment
+import face_alignment
 import numpy as np
 import cv2
 import os
@@ -16,7 +16,7 @@ def get_paths(video_name, base_folder=BASE_FOLDER):
     """Build all required input/output paths from video name."""
     base_path = os.path.join(base_folder, video_name)
     return {
-        "pyframes":   os.path.join(base_path, "pyframes"),
+        "pycrop":   os.path.join(base_path, "pycrop"),
         "tracks":     os.path.join(base_path, "pywork", "tracks.pckl"),
         "mouth_crops": os.path.join(base_path, "mouth_crops"),
     }
@@ -76,7 +76,7 @@ def get_mouth_crop(image, landmarks, pad=MOUTH_PAD, size=MOUTH_CROP_SIZE):
     return cv2.resize(mouth_crop, size)
 
 def process_video(video_name, base_folder=BASE_FOLDER, device="cuda"):
- """
+    """
     Main processing function. For each track from LR-ASD, runs face alignment
     on each frame and saves the mouth crop.
     """
