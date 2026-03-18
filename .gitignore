@@ -17,3 +17,5 @@ __pycache__/
 # experiments
 experiments/logs/
 experiments/results/
+
+*.egg-info/
