@@ -3,8 +3,6 @@ import numpy as np
 import cv2
 import os
 import pickle
-import argparse
-import glob
 from tqdm import tqdm
 
 MOUTH_CROP_SIZE = (96, 96)
@@ -15,20 +13,84 @@ BASE_FOLDER = "/home/jembo/AVATAR/data/processed"
 FPS = 25
 
 def get_paths(video_name, base_folder=BASE_FOLDER):
-    base_path = os.path.join(base_folder, f"{video_name}_av", "cache")
+    """Build all required input/output paths from video name."""
+    base_path = os.path.join(base_folder, f"{video_name}", "cache")
     return {
         "pycrop":      os.path.join(base_path, "pycrop"),
         "tracks":      os.path.join(base_path, "tracks.pckl"),
-        "mouth_crops": os.path.join(base_folder, f"{video_name}_av", "mouth_crops"),
+        "mouth_crops": os.path.join(base_folder, f"{video_name}", "mouth_crops"),
     }
 
+def load_tracks(tracks_path):
+    """Load face tracks from tracks.pckl."""
+    with open(tracks_path, "rb") as f:
+        tracks = pickle.load(f)
+    return tracks
+
+def read_face_clip(clip_path):
+    """
+    Read all frames from a face clip avi.
+    Returns a list of RGB numpy arrays.
+    """
+    cap = cv2.VideoCapture(clip_path)
+    if not cap.isOpened():
+        raise IOError(f"Could not open face clip: {clip_path}")
+
+    frames = []
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    cap.release()
+    return frames
+
+def get_mouth_crop(image, landmarks, pad=MOUTH_PAD, size=MOUTH_CROP_SIZE):
+    """
+    Extract and resize the mouth region from an image using facial landmarks.
+
+    image:     numpy array (H, W, 3) in RGB, already cropped to face region
+    landmarks: (68, 2) array of x,y coordinates relative to this image
+    """
+    mouth_pts = landmarks[MOUTH_START:MOUTH_END]
+
+    # bounding box around mouth points
+    x_min = int(np.min(mouth_pts[:, 0])) - pad
+    x_max = int(np.max(mouth_pts[:, 0])) + pad
+    y_min = int(np.min(mouth_pts[:, 1])) - pad
+    y_max = int(np.max(mouth_pts[:, 1])) + pad
+
+    # clamp to image bounds
+    h, w = image.shape[:2]
+    x_min = max(0, x_min)
+    y_min = max(0, y_min)
+    x_max = min(w, x_max)
+    y_max = min(h, y_max)
+
+    mouth_crop = image[y_min:y_max, x_min:x_max]
+
+    if mouth_crop.size == 0:
+        return np.zeros((size[1], size[0], 3), dtype=np.uint8)
+
+    return cv2.resize(mouth_crop, size)
+
 def process_video(video_name, base_folder=BASE_FOLDER, device="cuda"):
+    """
+    For each track from av-diarization, runs face alignment on each frame
+    and saves the mouth crops directly as a .avi file per track.
+    """
     paths = get_paths(video_name, base_folder)
 
     if not os.path.exists(paths["tracks"]):
-        raise FileNotFoundError(f"tracks.pckl not found at {paths['tracks']}")
+        raise FileNotFoundError(
+            f"tracks.pckl not found at {paths['tracks']}. "
+            f"Make sure av-diarization has been run for this video first."
+        )
     if not os.path.exists(paths["pycrop"]):
-        raise FileNotFoundError(f"pycrop directory not found at {paths['pycrop']}")
+        raise FileNotFoundError(
+            f"pycrop directory not found at {paths['pycrop']}. "
+            f"Make sure av-diarization has been run for this video first."
+        )
 
     os.makedirs(paths["mouth_crops"], exist_ok=True)
 
