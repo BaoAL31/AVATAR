@@ -7,7 +7,7 @@ import warnings
 from ast import literal_eval
 from typing import List
 
-import demjson
+import demjson3
 import torch
 from mmsc.common.registry import registry
 from mmsc.utils.env import import_user_module
