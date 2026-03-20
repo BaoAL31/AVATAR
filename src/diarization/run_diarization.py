@@ -34,3 +34,5 @@ def diarize(video_name: str, visualize: bool = False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     diarizer = AVDiarizer(args)
     diarizer.run(paths["input"], paths["output"], device, paths["cache"], args.visualize)
+
+
