@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 import cv2
 import numpy as np
+import argparse
+
 from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 import torch
@@ -17,6 +19,7 @@ from espnet.nets.scorers.length_bonus import LengthBonus
 from utils.utils import UNIGRAM1000_LIST
 
 DATA_DIR = "/home/jembo/AVATAR/data/processed"
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def get_paths(video_name, data_dir=DATA_DIR):
     base = os.path.join(data_dir, f"{video_name}")
@@ -66,7 +69,7 @@ def audio_to_tensor(path):
     audio, sr = torchaudio.load(path, normalize=True)
     return audio
 
-def load_model(ckpt_path: str, device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')):
+def load_model(ckpt_path: str, device: torch.device = DEVICE):
     GlobalHydra.instance().clear()
     with initialize_config_dir(config_dir='/home/jembo/AVATAR/models/usr/conf'):
         cfg = compose(config_name='config', overrides=[
@@ -81,3 +84,67 @@ def load_model(ckpt_path: str, device: torch.device = torch.device('cuda' if tor
     model = model.to(device)
     model.eval()
     return model, cfg
+
+def transcribe(video_name: str, track_idx: int, model: E2E, cfg, device: torch.device = DEVICE, modality: str = "av") -> str:
+    video, audio = load_and_preprocess_track(video_name, track_idx)
+    video = video.to(device)
+    audio = audio.to(device)
+
+    beam_search = get_beam_search(cfg, model)
+
+    with torch.no_grad():
+        feat, _, _ = model.encoder.forward_single(
+            xs_v=video, 
+            xs_a=audio.unsqueeze(0).transpose(1, 2)
+        )
+        nbest_hyps = beam_search(
+            x=feat.squeeze(0),
+            modality=modality,
+            maxlenratio=cfg.decode.maxlenratio,
+            minlenratio=cfg.decode.minlenratio
+        )
+
+    nbest_hyps = [h.asdict() for h in nbest_hyps[:1]]
+    transcription = add_results_to_json(nbest_hyps, UNIGRAM1000_LIST)
+    transcription = transcription.replace("<eos>", "").replace("▁", " ").strip()
+
+    return transcription
+
+
+def get_beam_search(cfg, model: E2E) -> BatchBeamSearch:
+    token_list = UNIGRAM1000_LIST
+    odim = len(token_list)
+    scorers = model.scorers()
+    scorers["lm"] = None
+    scorers["length_bonus"] = LengthBonus(len(token_list))
+    weights = dict(
+        decoder=1.0 - cfg.decode.ctc_weight,
+        ctc=cfg.decode.ctc_weight,
+        lm=cfg.decode.lm_weight,
+        length_bonus=cfg.decode.penalty,
+    )
+    return BatchBeamSearch(
+        beam_size=cfg.decode.beam_size,
+        vocab_size=len(token_list),
+        weights=weights,
+        scorers=scorers,
+        sos=odim - 1,
+        eos=odim - 1,
+        token_list=token_list,
+        pre_beam_score_key=None if cfg.decode.ctc_weight == 1.0 else "decoder",
+    )
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--video_name", type=str, required=True)
+    parser.add_argument("--track_idx", type=int, required=True)
+    parser.add_argument("--ckpt_path", type=str, default=CKPT_PATH)
+    parser.add_argument("--output", type=str, required=True)
+    args = parser.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model, cfg = load_model(args.ckpt_path, device)
+    result = transcribe(args.video_name, args.track_idx, model, cfg, device)
+
+    with open(args.output, "w") as f:
+        f.write(result)
