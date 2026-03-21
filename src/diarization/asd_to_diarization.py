@@ -15,8 +15,8 @@ def get_paths(video_name, base_dir=BASE_DIR):
     return {
         "pywork":   os.path.join(base, "pywork"),
         "pyframes": os.path.join(base, "pyframes"),
-        "tracks":   os.path.join(base, "pywork", "tracks.pckl"),
-        "scores":   os.path.join(base, "pywork", "scores.pckl"),
+        "tracks":   os.path.join(base, "pywork", "tracks.pkl"),
+        "scores":   os.path.join(base, "pywork", "scores.pkl"),
         "rttm":     os.path.join(base, "diarization.rttm"),
     }
 
@@ -33,9 +33,9 @@ def diarize(video_name:str):
     paths = get_paths(video_name)
 
     if not os.path.exists(paths["tracks"]):
-        raise FileNotFoundError(f"tracks.pckl not found: {paths['tracks']}")
+        raise FileNotFoundError(f"tracks.pkl not found: {paths['tracks']}")
     if not os.path.exists(paths["scores"]):
-        raise FileNotFoundError(f"scores.pckl not found: {paths['scores']}")
+        raise FileNotFoundError(f"scores.pkl not found: {paths['scores']}")
     if not os.path.exists(paths["pyframes"]):
         raise FileNotFoundError(f"pyframes not found: {paths['pyframes']}")
 

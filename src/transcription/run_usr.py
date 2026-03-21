@@ -18,7 +18,7 @@ from espnet.nets.pytorch_backend.e2e_asr_transformer import E2E
 from espnet.nets.scorers.length_bonus import LengthBonus
 from utils.utils import UNIGRAM1000_LIST
 
-DATA_DIR = "/home/jembo/AVATAR/data/processed"
+DATA_DIR = "./data/processed"
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def get_paths(video_name, data_dir=DATA_DIR):
@@ -85,7 +85,7 @@ def load_model(ckpt_path: str, device: torch.device = DEVICE):
     model.eval()
     return model, cfg
 
-def transcribe(video_name: str, track_idx: int, model: E2E, cfg, device: torch.device = DEVICE, modality: str = "av") -> str:
+def transcribe_track(video_name: str, track_idx: int, model: E2E, cfg, device: torch.device = DEVICE, modality: str = "av") -> str:
     video, audio = load_and_preprocess_track(video_name, track_idx)
     video = video.to(device)
     audio = audio.to(device)
@@ -134,6 +134,19 @@ def get_beam_search(cfg, model: E2E) -> BatchBeamSearch:
         pre_beam_score_key=None if cfg.decode.ctc_weight == 1.0 else "decoder",
     )
 
+def transcribe_video(video_name: str, model: E2E, cfg, device: torch.device = DEVICE) -> list:
+    paths = get_paths(video_name)
+    tracks = sorted([f for f in os.listdir(paths["mouth_crops"]) if f.endswith(".avi")])
+    
+    results = []
+    for track_avi in tracks:
+        track_idx = int(os.path.splitext(track_avi)[0])
+        print(f"Transcribing track {track_idx}...")
+        track_transcription = transcribe_track(video_name, track_idx, model, cfg, device)
+        results.append((track_idx, track_transcription))
+    
+    return results
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--video_name", type=str, required=True)
@@ -141,10 +154,11 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt_path", type=str, default=CKPT_PATH)
     parser.add_argument("--output", type=str, required=True)
     args = parser.parse_args()
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, cfg = load_model(args.ckpt_path, device)
-    result = transcribe(args.video_name, args.track_idx, model, cfg, device)
+    results = transcribe_video(args.video_name, model, cfg, device)
 
-    with open(args.output, "w") as f:
-        f.write(result)
+    with open(args.tmp_output, "w") as f:
+        json.dump({str(track_idx): transcription for track_idx, transcription in results}, f)
+
+

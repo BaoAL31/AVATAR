@@ -57,7 +57,7 @@ class AVDiarizer():
         preprocessor = Preprocessor(cache_dir, ckpt_dir, device)
         tracks = preprocessor.run(in_file)
 
-        with open(os.path.join(cache_dir, "tracks.pckl"), "wb") as f:
+        with open(os.path.join(cache_dir, "tracks.pkl"), "wb") as f:
             pickle.dump(tracks, f)
 
         # Syncnet
@@ -67,6 +67,8 @@ class AVDiarizer():
         # Face cluster
         face_clusterer = FaceCluster(cache_dir, ckpt_dir, device)
         face_ids = face_clusterer.run(tracks)
+        with open(os.path.join(cache_dir, "faceidx.pkl"), "wb") as f:
+            pickle.dump(face_ids, f)
 
         # Vad
         vad = Vad(cache_dir, ckpt_dir, self.args.vad, device)

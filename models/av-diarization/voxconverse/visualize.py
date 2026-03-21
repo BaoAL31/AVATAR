@@ -189,9 +189,9 @@ class Visualizer:
 
 if __name__ == '__main__':
     cache_dir = '/users/jaesung/voxconverse_method/temp'
-    with open('/users/jaesung/voxconverse_method/temp/pywork/tracks.pckl', 'rb') as f:
+    with open('/users/jaesung/voxconverse_method/temp/pywork/tracks.pkl', 'rb') as f:
         tracks = pickle.load(f)
-    with open('/users/jaesung/voxconverse_method/temp/pywork/activesd.pckl', 'rb') as f:
+    with open('/users/jaesung/voxconverse_method/temp/pywork/activesd.pkl', 'rb') as f:
         dists = pickle.load(f)
     with open('/users/jaesung/voxconverse_method/temp/pywork/faceidx.pkl', 'rb') as f:
         face_id = pickle.load(f)

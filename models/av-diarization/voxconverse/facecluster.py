@@ -154,9 +154,8 @@ class FaceCluster(nn.Module):
 
 if __name__ == '__main__':
     cache_dir = '/users/jaesung/voxconverse_method/temp'
-    with open('/users/jaesung/voxconverse_method/temp/pywork/tracks.pckl', 'rb') as f:
+    with open('/users/jaesung/voxconverse_method/temp/pywork/tracks.pkl', 'rb') as f:
         tracks = pickle.load(f)
-    # print(tracks)
     device = torch.device('cuda')
     cluster = FaceCluster(cache_dir=cache_dir, device=device)
     faceidx = cluster.run(tracks)
