@@ -80,6 +80,26 @@ class Pipeline:
         print(f"Transcript saved to {self.paths['output']}")
         return self.paths["output"]
 
+    # Save as subtitle file for easier visualization in video players
+    def save_srt(self, results: list) -> str:
+        def to_srt_time(seconds: float) -> str:
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = int(seconds % 60)
+            ms = int((seconds % 1) * 1000)
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+        output_path = os.path.join(self.output_dir, "transcript.srt")
+        with open(output_path, "w") as f:
+            for i, entry in enumerate(results, start=1):
+                f.write(f"{i}\n")
+                f.write(f"{to_srt_time(entry['start'])} --> {to_srt_time(entry['end'])}\n")
+                f.write(f"{entry['speaker']}: {entry['transcription']}\n")
+                f.write("\n")
+
+        print(f"SRT saved to {output_path}")
+        return output_path
+
     def run(self) -> list:
         print("[1/3] Diarization...")
         diarizer = Diarizer(self.video_path, self.output_dir, self.device)
@@ -96,5 +116,6 @@ class Pipeline:
         attributed_transcript = self._get_attributed_transcript(transcriptions)
 
         self.save_transcript(attributed_transcript)
+        self.save_srt(attributed_transcript)
         print("Pipeline complete.")
         return attributed_transcript
