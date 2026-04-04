@@ -113,3 +113,12 @@ class MouthCropper:
 
         print(f"\nDone. Processed {total} frames, skipped {skipped}.")
         print(f"Mouth crops saved to: {self.paths['mouth_crops']}")
+
+
+def process_video(video_name: str, output_dir: str = None, device: torch.device = None):
+    if output_dir is None:
+        output_dir = f"/home/jembo/AVATAR/data/processed/{video_name}"
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    cropper = MouthCropper(video_name, output_dir, device)
+    cropper.run()

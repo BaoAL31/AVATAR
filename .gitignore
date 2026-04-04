@@ -19,3 +19,5 @@ experiments/logs/
 experiments/results/
 
 *.egg-info/
+.aider*
+.env
