@@ -1,5 +1,6 @@
 # data
-data/
+data/raw
+data/processed
 
 # model weights
 *.model
