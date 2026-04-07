@@ -1,5 +1,9 @@
 # data
-data/
+data/processed
+data/raw
+data/libreface_output
+data/libreface_weights
+tmp/
 
 # model weights
 *.model
