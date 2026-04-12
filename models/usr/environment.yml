@@ -47,6 +47,7 @@ dependencies:
     - fvcore==0.1.5.post20221221
     - gitdb==4.0.10
     - gitpython==3.1.31
+    - huggingface-hub==0.23.5
     - hydra-core==1.1.1
     - idna==3.4
     - iopath==0.1.10

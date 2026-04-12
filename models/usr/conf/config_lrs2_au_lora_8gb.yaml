@@ -1,0 +1,65 @@
+defaults:
+  - checkpoint: last_k
+  - data: default
+  - debug: no_debug
+  - decode: default
+  - logger: default
+  - logging: default
+  - model: default
+  - optimizer: default
+  - trainer: train
+
+hydra:
+  output_subdir: null
+  run:
+    dir: ${checkpoint.dirpath}/${experiment_name}
+
+project_name: semi_supervised_usr
+experiment_name: usr_ft_lrs2_au_lora_8gb_test
+num_workers: 8
+log_wandb: False
+replace_sampler_ddp: False
+compile_model: True
+fix_seed: True
+matmul_precision: high
+ckpt_path:
+gpus:
+test: False
+test_avg: False
+txt_file:
+slurm_job_id:
+
+# Model/backbone for AU + LoRA finetuning
+model:
+  pretrained_model_path: /home/jembo/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth
+  transfer_only_encoder: True
+  lora:
+    enabled: True
+  backbone:
+    use_au: True
+
+# Data — HF Hub sharded (manifest tags: lrs2_00..lrs2_14)
+# Rebuild manifests with:
+#   python scripts/build_lrs2_usr_manifest.py --staging <staging_dir> ...
+data:
+  frames_per_gpu: 4000
+  frames_per_gpu_labelled: 4000
+  frames_per_gpu_val: 4000
+  dataset:
+    train_csv: /mnt/d/lrs2_manifests/train_manifest.csv
+    val_csv: /mnt/d/lrs2_manifests/val_manifest.csv
+    test_csv: /mnt/d/lrs2_manifests/val_manifest.csv
+  hub:
+    lrs2_repo_prefix: HBaoAL/LRS2
+  au:
+    enabled: True
+
+# Keep single-process defaults for local 1-GPU testing
+trainer:
+  strategy: auto
+  devices: 1
+  num_nodes: 1
+  max_epochs: 1
+
+checkpoint:
+  dirpath: /mnt/d/usr_ckpts

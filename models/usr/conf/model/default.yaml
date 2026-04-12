@@ -51,3 +51,18 @@ pretrained_lm_path:
 avg_ckpts: 10
 pred_block_idx: 1
 detach: False
+lora:
+  enabled: False
+  freeze_base_model: True
+  rank: 8
+  alpha: 16
+  dropout: 0.05
+  linear_target_patterns:
+    - encoder.encoders
+    - encoder.linear_v
+    - encoder.linear_a
+    - encoder.linear_av
+    - decoder
+  conv_target_patterns:
+    - encoder.frontend_v
+    - encoder.frontend_a

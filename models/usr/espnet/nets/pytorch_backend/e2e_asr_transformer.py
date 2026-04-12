@@ -65,6 +65,8 @@ class E2E(torch.nn.Module):
             mask_init_type=args.mask_init_type,
             drop_path=args.drop_path,
             encoder_stride=args.encoder_stride,
+            use_au=getattr(args, "use_au", False),
+            au_dim=getattr(args, "au_dim", 24),
         )
 
         if args.ctc_rel_weight > 0.0:

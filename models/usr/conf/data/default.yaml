@@ -22,3 +22,27 @@ lrs3_audio_dir:
 vox2_video_dir:
 vox2_audio_dir:
 skip_fails: True
+# Manifest CSV: tag,<relative_mp4>,<frames>,<label_ids>. Those same relative paths are Hub
+# filenames when hub.<tag>_repo_id is set (no manifest change). hf_hub_cache is the Hub
+# download root (HF_HUB_CACHE); actual files live under .../datasets--org--name/snapshots/<rev>/...
+hf_hub_cache: ${hf_hub_cache_path:}
+# Hub media loading. Two modes per dataset tag:
+#   repo_id:     single repo for plain tag (e.g. tag=lrs2 → hub.lrs2_repo_id)
+#   repo_prefix: sharded repos for tags like lrs2_03 → {prefix}_03 (e.g. HBaoAL/LRS2_03)
+# manifest file_path is the Hub filename (e.g. <stem>/<stem>.mp4); .wav/.npz derived from same stem.
+hub:
+  lrs2_repo_id:
+  lrs2_repo_prefix:
+  lrs3_repo_id:
+  lrs3_repo_prefix:
+  vox2_repo_id:
+  vox2_repo_prefix:
+  repo_type: dataset
+  revision:
+  cache_dir:
+# AU-aware training: LibreFace NPZ dirs (same stem as video basename, e.g. clip.npz)
+au:
+  enabled: false
+  lrs2_npz_dir:
+  lrs3_npz_dir:
+  vox2_npz_dir:

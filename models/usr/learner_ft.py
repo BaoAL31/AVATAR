@@ -14,6 +14,8 @@ from espnet.nets.pytorch_backend.lm.transformer import TransformerLM
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
 from espnet.nets.scorers.length_bonus import LengthBonus
 from metrics import WER
+from utils.au_npz import AU_FEATURE_DIM
+from utils.lora import inject_lora
 from utils.utils import ids_to_str, set_requires_grad, UNIGRAM1000_LIST, get_param_groups_ft
 
 
@@ -23,10 +25,7 @@ class SSLLearner(LightningModule):
         self.save_hyperparameters(cfg)
         self.cfg = cfg
 
-        if cfg.compile_model:
-            self.model = torch.compile(E2E(1049, cfg.model.backbone))
-        else:
-            self.model = E2E(1049, cfg.model.backbone)
+        self.model = E2E(1049, cfg.model.backbone)
 
         if cfg.model.pretrained_model_path:
             print("Load pretrained model weights")
@@ -37,7 +36,22 @@ class SSLLearner(LightningModule):
                 ckpt = {k: v for k, v in ckpt.items() if not k.startswith("after_norm")}
                 self.model.encoder.load_state_dict(ckpt, strict=False)
             else:
-                self.model.load_state_dict(ckpt)
+                _strict = not getattr(cfg.model.backbone, "use_au", False)
+                self.model.load_state_dict(ckpt, strict=_strict)
+
+        if getattr(cfg.model.backbone, "use_au", False):
+            _au = getattr(cfg.data, "au", None)
+            if _au is None or not _au.get("enabled", False):
+                print(
+                    "Warning: model.backbone.use_au=True but data.au.enabled is not True — "
+                    "batches without 'au' will use zeros for AU fusion."
+                )
+
+        if cfg.model.lora.enabled:
+            self._enable_lora()
+
+        if cfg.compile_model:
+            self.model = torch.compile(self.model)
 
         if cfg.debug.log_gradients:
             self.logger.experiment.watch(self.model, log="gradients")
@@ -49,6 +63,31 @@ class SSLLearner(LightningModule):
         self.wer_video = WER()
         self.wer_audio = WER()
         self.wer_av = WER()    
+
+    def _enable_lora(self):
+        lora_cfg = self.cfg.model.lora
+        if lora_cfg.freeze_base_model:
+            set_requires_grad(self.model, False)
+
+        replaced = inject_lora(
+            self.model,
+            rank=lora_cfg.rank,
+            alpha=lora_cfg.alpha,
+            dropout=lora_cfg.dropout,
+            linear_patterns=lora_cfg.linear_target_patterns,
+            conv_patterns=lora_cfg.conv_target_patterns,
+        )
+
+        print(
+            "LoRA enabled with rank="
+            f"{lora_cfg.rank}, alpha={lora_cfg.alpha}, dropout={lora_cfg.dropout}. "
+            f"Replaced modules: {replaced}"
+        )
+        if getattr(self.cfg.model.backbone, "use_au", False) and hasattr(
+            self.model.encoder, "au_fusion"
+        ):
+            for p in self.model.encoder.au_fusion.parameters():
+                p.requires_grad = True
 
     def get_beam_search(self, model):
         token_list = UNIGRAM1000_LIST
@@ -88,6 +127,21 @@ class SSLLearner(LightningModule):
 
         return beam_search
 
+    def _au_encoder_kwargs(self, data, video_in):
+        """Optional AU tensor (B, T, AU_FEATURE_DIM) for encoder fusion; zeros if missing."""
+        if not getattr(self.cfg.model.backbone, "use_au", False):
+            return {}
+        au = data.get("au")
+        if au is None:
+            if video_in.dim() == 5:
+                b, t = video_in.shape[0], video_in.shape[2]
+            else:
+                b, t = video_in.shape[0], video_in.shape[1]
+            au = video_in.new_zeros(b, t, AU_FEATURE_DIM)
+        else:
+            au = au.to(video_in.device)
+        return {"au": au}
+
     def get_mask(self, data, padding_mask, mask_prob, mask_length):
         B, C, T, H, W = data["video"].shape
         mask = ~compute_mask_indices(
@@ -107,7 +161,10 @@ class SSLLearner(LightningModule):
 
         padding_mask = make_non_pad_mask(data["video_lengths"]).to(data["video"].device)
 
-        x_v, x_a, x_av, _, _ = self.model.encoder(video, audio, padding_mask.unsqueeze(-2))
+        enc_kw = self._au_encoder_kwargs(data, video)
+        x_v, x_a, x_av, _, _ = self.model.encoder(
+            video, audio, padding_mask.unsqueeze(-2), **enc_kw
+        )
         loss_ctc_v = self.model.ctc_v(x_v, padding_mask.sum(-1).squeeze(-1), label)
         loss_ctc_a = self.model.ctc_a(x_a, padding_mask.sum(-1).squeeze(-1), label)
         loss_ctc_av = self.model.ctc_av(x_av, padding_mask.sum(-1).squeeze(-1), label)
@@ -140,8 +197,10 @@ class SSLLearner(LightningModule):
         video, audio, label = data["video"], data["audio"], data["label"]
         padding_mask_v = make_non_pad_mask(data["video_lengths"]).to(data["video"].device).unsqueeze(-2)
 
+        v_in = video.squeeze(1)
+        enc_kw = self._au_encoder_kwargs(data, v_in)
         features_v, features_a, features_av, _, _ = self.model.encoder(
-            video.squeeze(1), audio.transpose(1, 2), padding_mask_v
+            v_in, audio.transpose(1, 2), padding_mask_v, **enc_kw
         )
         loss_ctc_v = self.model.ctc_v(
             features_v, torch.tensor(data["video_lengths"], device=features_v.device), data["label"].squeeze(1)
@@ -166,11 +225,18 @@ class SSLLearner(LightningModule):
     def validation_step(self, data, batch_idx):
         self.shared_val_test_step(data)
 
-    def calculate_wer(self, video, audio, padding_mask, labels):
+    def calculate_wer(self, video, audio, padding_mask, labels, au=None):
         labels = labels.squeeze(1)
-        for vid, aud, label, mask in zip(video, audio, labels, padding_mask):
+        for i, (vid, aud, label, mask) in enumerate(zip(video, audio, labels, padding_mask)):
+            enc_kw = {}
+            if getattr(self.cfg.model.backbone, "use_au", False):
+                if au is not None:
+                    enc_kw["au"] = au[i : i + 1].to(vid.device)
+                else:
+                    t = vid.shape[1]
+                    enc_kw["au"] = vid.new_zeros(1, t, AU_FEATURE_DIM)
             feat_v, feat_a, feat_av, _, _ = self.model.encoder(
-                vid.unsqueeze(0), aud.unsqueeze(0), mask.unsqueeze(0).unsqueeze(-2)
+                vid.unsqueeze(0), aud.unsqueeze(0), mask.unsqueeze(0).unsqueeze(-2), **enc_kw
             )
             
             nbest_hyps_v = self.beam_search_video(
@@ -228,7 +294,8 @@ class SSLLearner(LightningModule):
             data["video"].squeeze(1), 
             data["audio"].transpose(1, 2),
             padding_mask, 
-            data["label"], 
+            data["label"],
+            au=data.get("au"),
         )
 
         print(self.wer_video.compute())

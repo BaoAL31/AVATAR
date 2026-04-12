@@ -141,6 +141,8 @@ class Encoder(torch.nn.Module):
         mlp_sub=False,
         separate_preds=False,
         predictor_avg_pool_stride=1,
+        use_au=False,
+        au_dim=24,
     ):
         """Construct an Encoder object."""
         super(Encoder, self).__init__()
@@ -299,8 +301,17 @@ class Encoder(torch.nn.Module):
         self.linear_v = nn.Linear(idim, attention_dim)
         self.linear_av = nn.Linear(2*idim, attention_dim)
 
+        self.use_au = use_au
+        self.au_dim = au_dim
+        if self.use_au:
+            self.au_fusion = nn.Sequential(
+                nn.Linear(au_dim, idim),
+                nn.LayerNorm(idim),
+                nn.GELU(),
+                nn.Linear(idim, idim),
+            )
 
-    def forward(self, xs_v, xs_a, masks, return_feats=False):
+    def forward(self, xs_v, xs_a, masks, return_feats=False, au=None):
         """Encode input sequence.
 
         :param torch.Tensor xs: input tensor
@@ -311,6 +322,14 @@ class Encoder(torch.nn.Module):
         """
         xs_v = self.frontend_v(xs_v)
         xs_a = self.frontend_a(xs_a)
+
+        if self.use_au and au is not None:
+            T_enc = xs_v.size(1)
+            if au.size(1) != T_enc:
+                au_ch = au.transpose(1, 2).contiguous()
+                au_ch = F.interpolate(au_ch, size=T_enc, mode="linear", align_corners=False)
+                au = au_ch.transpose(1, 2).contiguous()
+            xs_v = xs_v + self.au_fusion(au.to(dtype=xs_v.dtype, device=xs_v.device))
 
         xs_av = self.linear_av(torch.cat([xs_v, xs_a], dim=-1))
         xs_v = self.linear_v(xs_v)
@@ -346,7 +365,7 @@ class Encoder(torch.nn.Module):
 
         return xs[:len(xs_v)], xs[len(xs_v):2*len(xs_v)], xs[2*len(xs_v):], masks, feats
 
-    def forward_single(self, xs_v=None, xs_a=None, masks=None, return_feats=False):
+    def forward_single(self, xs_v=None, xs_a=None, masks=None, return_feats=False, au=None):
         """Encode input sequence.
 
         :param torch.Tensor xs: input tensor
@@ -361,6 +380,14 @@ class Encoder(torch.nn.Module):
             xs_v = self.frontend_v(xs_v)
         if xs_a is not None:
             xs_a = self.frontend_a(xs_a)
+
+        if self.use_au and au is not None and xs_v is not None:
+            T_enc = xs_v.size(1)
+            if au.size(1) != T_enc:
+                au_ch = au.transpose(1, 2).contiguous()
+                au_ch = F.interpolate(au_ch, size=T_enc, mode="linear", align_corners=False)
+                au = au_ch.transpose(1, 2).contiguous()
+            xs_v = xs_v + self.au_fusion(au.to(dtype=xs_v.dtype, device=xs_v.device))
 
         if xs_v is not None and xs_a is not None:
             xs = self.linear_av(torch.cat([xs_v, xs_a], dim=-1))

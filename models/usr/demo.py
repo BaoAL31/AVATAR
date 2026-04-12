@@ -20,7 +20,10 @@ from espnet.nets.pytorch_backend.e2e_asr_transformer import E2E
 from espnet.nets.pytorch_backend.lm.transformer import TransformerLM
 from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
 from espnet.nets.scorers.length_bonus import LengthBonus
+from utils.hf_paths import register_hf_hydra_resolvers
 from utils.utils import UNIGRAM1000_LIST
+
+register_hf_hydra_resolvers()
 
 
 def load_video(path):

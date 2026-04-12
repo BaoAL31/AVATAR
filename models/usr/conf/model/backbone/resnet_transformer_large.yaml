@@ -37,3 +37,5 @@ ctc_type: warpctc
 drop_path: 0.0
 encoder_stride: 1
 ctc_rel_weight: ${model.ctc_rel_weight}
+use_au: false
+au_dim: 24

@@ -9,7 +9,10 @@ import torch
 
 from data.data_module import DataModule
 from semi_learner import SSLLearner
+from utils.hf_paths import register_hf_hydra_resolvers
 from utils.utils import average_checkpoints
+
+register_hf_hydra_resolvers()
 
 # static vars
 os.environ["WANDB_SILENT"] = "true"
