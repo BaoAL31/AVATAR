@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import os
 
+from .hf_env import ensure_hf_env
+
+ensure_hf_env()
+
 
 def default_hf_hub_cache_path() -> str:
     """
     Root directory where ``hf_hub_download`` stores files when ``cache_dir`` is not passed.
     Honors ``HF_HUB_CACHE``, then ``HF_HOME``/hub, then the usual default under ``~/.cache``.
+    See ``hf_env.ensure_hf_env`` for pointing the hub cache at ``/data/...`` without moving ``HF_HOME`` (keeps CLI token path valid).
     """
     try:
         from huggingface_hub.constants import HF_HUB_CACHE

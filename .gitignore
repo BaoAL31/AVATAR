@@ -2,6 +2,7 @@
 data/processed
 data/raw
 data/libreface_output
+data/libreface_out
 data/libreface_weights
 tmp/
 

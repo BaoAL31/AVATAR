@@ -117,7 +117,7 @@ class MouthCropper:
 
 def process_video(video_name: str, output_dir: str = None, device: torch.device = None):
     if output_dir is None:
-        output_dir = f"/home/jembo/AVATAR/data/processed/{video_name}"
+        output_dir = f"/home/hoangbng/AVATAR/AVATAR/data/processed/{video_name}"
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cropper = MouthCropper(video_name, output_dir, device)

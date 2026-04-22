@@ -1,4 +1,5 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import cv2
 import numpy as np
@@ -44,7 +45,9 @@ class AVDataset(Dataset):
             hub_repo_type="dataset",
             hub_revision=None,
             hub_cache_dir=None,
-        ):
+            max_frames_per_sample=None,
+            max_manifest_samples=None,
+    ):
 
         self.data_path = data_path
         self.video_path_prefix_lrs3 = video_path_prefix_lrs3
@@ -54,6 +57,9 @@ class AVDataset(Dataset):
         self.video_path_prefix_lrs2 = video_path_prefix_lrs2
         self.audio_path_prefix_lrs2 = audio_path_prefix_lrs2
         self.transforms = transforms
+        # Fairseq batch_by_size requires every length <= max_tokens (see frames_per_gpu in samplers).
+        self.max_frames_per_sample = max_frames_per_sample
+        self.max_manifest_samples = max_manifest_samples
 
         self.paths_counts_labels = self.configure_files()
         self.num_fails = 0
@@ -156,14 +162,83 @@ class AVDataset(Dataset):
             return None
         stem = os.path.splitext(os.path.basename(file_path))[0]
         return os.path.join(npz_base, f"{stem}.npz")
+
+    def _resolve_media_paths(self, tag: str, file_path: str):
+        """Local paths for video, audio, and optional AU npz. Hub downloads run in parallel per clip."""
+        if not self._hub_repo(tag):
+            v = self._resolve_video_path(tag, file_path)
+            a = self._resolve_audio_path(tag, file_path)
+            u = self._resolve_au_npz_path(tag, file_path) if self.au_enabled else None
+            return v, a, u
+        n_workers = 3 if self.au_enabled else 2
+        with ThreadPoolExecutor(max_workers=n_workers) as pool:
+            fut_v = pool.submit(self._resolve_video_path, tag, file_path)
+            fut_a = pool.submit(self._resolve_audio_path, tag, file_path)
+            if self.au_enabled:
+                fut_u = pool.submit(self._resolve_au_npz_path, tag, file_path)
+                return fut_v.result(), fut_a.result(), fut_u.result()
+            return fut_v.result(), fut_a.result(), None
+
+    def prefetch_hub_cache(self, max_workers: int = 16):
+        """Download all Hub files referenced by this manifest in parallel (warms cache; rank-0 only recommended)."""
+        tasks = []
+        seen = set()
+        for tag, file_path, _c, _l in self.paths_counts_labels:
+            repo = self._hub_repo(tag)
+            if not repo:
+                continue
+            fp = file_path.replace("\\", "/")
+            for rel in (fp, self._posix_stem_ext(fp, ".wav")):
+                key = (repo, rel)
+                if key not in seen:
+                    seen.add(key)
+                    tasks.append(key)
+            if self.au_enabled:
+                rel = self._posix_stem_ext(fp, ".npz")
+                key = (repo, rel)
+                if key not in seen:
+                    seen.add(key)
+                    tasks.append(key)
+        if not tasks:
+            return
+
+        def _download(item):
+            repo_id, filename = item
+            hub_local_path(
+                repo_id,
+                filename,
+                repo_type=self.hub_repo_type,
+                revision=self.hub_revision,
+                cache_dir=self.hub_cache_dir,
+            )
+
+        print(f"Prefetching {len(tasks)} Hugging Face Hub files (max_workers={max_workers})...")
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            list(pool.map(_download, tasks))
+        print("Hub prefetch finished.")
     
     def configure_files(self):
         # from https://github.com/facebookresearch/pytorchvideo/blob/874d27cb55b9d7e9df6cd0881e2d7fe9f262532b/pytorchvideo/data/labeled_video_paths.py#L37
         paths_counts_labels = []
+        limit = self.max_manifest_samples
         with open(self.data_path, "r") as f:
-            for path_count_label in f.read().splitlines():
+            for path_count_label in f:
+                path_count_label = path_count_label.strip()
+                if not path_count_label:
+                    continue
                 tag, file_path, count, label = path_count_label.split(",")
-                paths_counts_labels.append((tag, file_path, int(count), [int(lab) for lab in label.split()]))
+                tag, file_path, count, label = (
+                    tag.strip(),
+                    file_path.strip(),
+                    count.strip(),
+                    label.strip(),
+                )
+                c = int(count)
+                if self.max_frames_per_sample is not None:
+                    c = min(c, int(self.max_frames_per_sample))
+                paths_counts_labels.append((tag, file_path, c, [int(lab) for lab in label.split()]))
+                if limit is not None and len(paths_counts_labels) >= int(limit):
+                    break
         return paths_counts_labels
 
     def load_video(self, path):
@@ -185,7 +260,11 @@ class AVDataset(Dataset):
         return frames
     
     def load_audio(self, path):
-        audio, sr = torchaudio.load(path, normalize=True)
+        try:
+            audio, sr = torchaudio.load(path, normalize=True)
+        except (RuntimeError, OSError) as e:
+            print(f"load_audio failed ({path}): {e}")
+            return None
         # assert sr == 16_000
         return audio
         
@@ -195,7 +274,8 @@ class AVDataset(Dataset):
     def __getitem__(self, index):
         tag, file_path, count, label = self.paths_counts_labels[index]
 
-        video = self.load_video(self._resolve_video_path(tag, file_path))
+        video_path, audio_path, npz_path = self._resolve_media_paths(tag, file_path)
+        video = self.load_video(video_path)
         if video is None:
             self.num_fails += 1
             if self.num_fails == 300:
@@ -209,7 +289,20 @@ class AVDataset(Dataset):
                 return out
             else:
                 return self.__getitem__(index + 1)
-        audio = self.load_audio(self._resolve_audio_path(tag, file_path))
+        # Match capped manifest length (fairseq: each sample must be <= frames_per_gpu / frames_per_gpu_val).
+        if video.size(1) > count:
+            video = video[:, :count].contiguous()
+        audio = self.load_audio(audio_path)
+        if audio is None:
+            self.num_fails += 1
+            if self.num_fails == 300:
+                raise ValueError("Too many file errors.")
+            if self.skip_fails or int(count) < 350:
+                out = {"video": None, "audio": None, "label": None}
+                if self.au_enabled:
+                    out["au"] = None
+                return out
+            return self.__getitem__((index + 1) % len(self))
 
         audio = cut_or_pad(audio.squeeze(0), video.size(1) * 640)
 
@@ -221,7 +314,6 @@ class AVDataset(Dataset):
         }
         if self.au_enabled:
             t_frames = video_clean.size(0)
-            npz_path = self._resolve_au_npz_path(tag, file_path)
             out['au'] = load_au_from_npz(npz_path, t_frames)
             assert out['au'].shape == (t_frames, AU_FEATURE_DIM)
         return out

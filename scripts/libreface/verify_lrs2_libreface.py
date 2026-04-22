@@ -1,5 +1,5 @@
 """
-Verify LibreFace *.npz outputs produced by scripts/process_lrs2_libreface.py.
+Verify LibreFace *.npz outputs produced by ``process_lrs2_libreface.py process`` (export).
 
 Checks the same column keys as scripts/libreface_npz_schema.py (LibreFace default
 video + joint model), plus per-array sanity (consistent frame length, finite floats).
@@ -26,8 +26,8 @@ from tqdm import tqdm
 
 from libreface_npz_schema import CORE_NPZ_KEYS, EXPECTED_NPZ_KEY_SET
 
-# Default directory: match scripts/process_lrs2_libreface.py OUTPUT_DIR
-OUTPUT_DIR = "/mnt/d/libreface_out"
+# Default directory: match process_lrs2_libreface.py --output-dir
+_DEFAULT_LIBREFACE_OUT = Path("/data/hoangbng/libreface_out")
 
 # Same as process_lrs2_libreface: ignore these when scanning nested layout
 SKIP_SUBDIRS = frozenset({"libreface_out", "temp", "libreface_weights"})
@@ -134,7 +134,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path(OUTPUT_DIR),
+        default=_DEFAULT_LIBREFACE_OUT,
         help="Directory containing *.npz files",
     )
     parser.add_argument(

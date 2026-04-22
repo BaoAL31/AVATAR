@@ -8,7 +8,7 @@ from sklearn.cluster import AgglomerativeClustering
 from insightface.app import FaceAnalysis
 
 
-BASE_DIR = "/home/jembo/AVATAR/data/processed"
+BASE_DIR = "/home/hoangbng/AVATAR/AVATAR/data/processed"
 
 def get_paths(video_name, base_dir=BASE_DIR):
     base = os.path.join(base_dir, video_name)

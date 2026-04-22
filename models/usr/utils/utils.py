@@ -47,6 +47,13 @@ def average_checkpoints(last):
     return avg
 
 
+def _encoder_block_index(name: str) -> int:
+    """Block index N from ...encoders.N... (works with or without backbone. prefix)."""
+    parts = name.split(".")
+    i = parts.index("encoders")
+    return int(parts[i + 1])
+
+
 def get_param_groups(model, num_blocks, base_lr_enc, base_lr_other, lr_decay_rate, min_lr=1e-6):
     param_groups = {}
     layer_scales = list(lr_decay_rate ** (num_blocks - i - 1) for i in range(num_blocks))
@@ -65,7 +72,7 @@ def get_param_groups(model, num_blocks, base_lr_enc, base_lr_other, lr_decay_rat
             group_name = "frontend"
             base_lr = max(layer_scales[0] * base_lr_enc, min_lr)
         elif "backbone.encoder.encoders" in name:
-            group_id = int(name.split(".")[3])
+            group_id = _encoder_block_index(name)
             group_name = f"block_{group_id}"
             base_lr = max(layer_scales[group_id] * base_lr_enc, min_lr)
         else:
@@ -100,11 +107,14 @@ def get_param_groups_ft(model, num_blocks, base_lr_enc, base_lr_other, lr_decay_
         elif "encoder.embed" in name:
             group_name = "embed"
             base_lr = max(layer_scales[0] * base_lr_enc, min_lr)
+        elif "encoder.au_fusion" in name:
+            group_name = "au_fusion"
+            base_lr = max(base_lr_other, min_lr)
         elif "encoder.frontend" in name or "encoder.linear" in name:
             group_name = "frontend"
             base_lr = max(layer_scales[0] * base_lr_enc, min_lr)
         elif "encoder.encoders" in name:
-            group_id = int(name.split(".")[3])
+            group_id = _encoder_block_index(name)
             group_name = f"block_{group_id}"
             base_lr = max(layer_scales[group_id] * base_lr_enc, min_lr)
         else:

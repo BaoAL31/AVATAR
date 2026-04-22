@@ -134,6 +134,48 @@ class DataModule(LightningDataModule):
             "hub_cache_dir": hub_cache_dir,
         }
 
+    def _manifest_sample_kw(self, split: str) -> dict:
+        """Optional cap on CSV rows: train / val / test (see data.max_*_samples)."""
+        d = getattr(self.cfg.data, "max_train_samples", None)
+        v = getattr(self.cfg.data, "max_val_samples", None)
+        t = getattr(self.cfg.data, "max_test_samples", None)
+        if split == "train":
+            n = d
+        elif split == "val":
+            n = v
+        else:
+            n = t if t is not None else v
+        if n is None:
+            return {}
+        return {"max_manifest_samples": int(n)}
+
+    def _make_train_dataset(self):
+        ds_args = self.cfg.data.dataset
+        transform_video = self._video_transform(mode="train")
+        transform_audio = self._raw_audio_transform(mode="train")
+        return AVDataset(
+            data_path=ds_args.train_csv,
+            video_path_prefix_lrs2=self.cfg.data.lrs2_video_dir,
+            audio_path_prefix_lrs2=self.cfg.data.lrs2_audio_dir,
+            video_path_prefix_lrs3=self.cfg.data.lrs3_video_dir,
+            audio_path_prefix_lrs3=self.cfg.data.lrs3_audio_dir,
+            video_path_prefix_vox2=self.cfg.data.vox2_video_dir,
+            audio_path_prefix_vox2=self.cfg.data.vox2_audio_dir,
+            transforms={"video": transform_video, "audio": transform_audio},
+            max_frames_per_sample=self.cfg.data.frames_per_gpu,
+            **self._manifest_sample_kw("train"),
+            **self._au_dataset_kwargs(),
+            **self._hub_dataset_kwargs(),
+        )
+
+    def prepare_data(self):
+        """Optional parallel prefetch of all train-manifest Hub files (rank 0 only in Lightning)."""
+        h = getattr(self.cfg.data, "hub", None)
+        if not h or not h.get("prefetch_manifest", False):
+            return
+        w = int(h.get("prefetch_max_workers") or 16)
+        self._make_train_dataset().prefetch_hub_cache(max_workers=w)
+
     def _video_transform(self, mode):
         args = self.cfg.data
         transform = [
@@ -141,10 +183,10 @@ class DataModule(LightningDataModule):
         ] + (
             [
                 RandomCrop(args.crop_type.random_crop_dim),
-                Resize(args.crop_type.resize_dim),
+                Resize(args.crop_type.resize_dim, antialias=True),
                 RandomHorizontalFlip(args.horizontal_flip_prob)
             ]
-            if mode == "train" else [CenterCrop(args.crop_type.random_crop_dim), Resize(args.crop_type.resize_dim)]
+            if mode == "train" else [CenterCrop(args.crop_type.random_crop_dim), Resize(args.crop_type.resize_dim, antialias=True)]
         )
         if self.cfg.data.channel.in_video_channels == 1:
             transform.extend([Lambda(lambda x: x.transpose(0, 1)), Grayscale(), Lambda(lambda x: x.transpose(0, 1))])
@@ -185,24 +227,7 @@ class DataModule(LightningDataModule):
         )
 
     def train_dataloader(self):
-        ds_args = self.cfg.data.dataset
-
-        transform_video = self._video_transform(mode='train')
-        transform_audio = self._raw_audio_transform(mode='train')
-        
-        train_ds = AVDataset(
-            data_path=ds_args.train_csv,
-            video_path_prefix_lrs2=self.cfg.data.lrs2_video_dir,
-            audio_path_prefix_lrs2=self.cfg.data.lrs2_audio_dir,
-            video_path_prefix_lrs3=self.cfg.data.lrs3_video_dir,
-            audio_path_prefix_lrs3=self.cfg.data.lrs3_audio_dir,
-            video_path_prefix_vox2=self.cfg.data.vox2_video_dir,
-            audio_path_prefix_vox2=self.cfg.data.vox2_audio_dir,
-            transforms={'video': transform_video, 'audio': transform_audio},
-            **self._au_dataset_kwargs(),
-            **self._hub_dataset_kwargs(),
-        )
-
+        train_ds = self._make_train_dataset()
         sampler = ByFrameCountSampler(train_ds, self.cfg.data.frames_per_gpu)
         if self.total_gpus > 1:
             sampler = DistributedSamplerWrapper(sampler)
@@ -225,6 +250,8 @@ class DataModule(LightningDataModule):
             video_path_prefix_vox2=self.cfg.data.vox2_video_dir,
             audio_path_prefix_vox2=self.cfg.data.vox2_audio_dir,
             transforms={'video': transform_video, 'audio': transform_audio},
+            max_frames_per_sample=self.cfg.data.frames_per_gpu_val,
+            **self._manifest_sample_kw("val"),
             **self._au_dataset_kwargs(),
             **self._hub_dataset_kwargs(),
         )
@@ -248,6 +275,8 @@ class DataModule(LightningDataModule):
             video_path_prefix_vox2=self.cfg.data.vox2_video_dir,
             audio_path_prefix_vox2=self.cfg.data.vox2_audio_dir,
             transforms={'video': transform_video, 'audio': transform_audio},
+            max_frames_per_sample=self.cfg.data.frames_per_gpu_val,
+            **self._manifest_sample_kw("test"),
             **self._au_dataset_kwargs(),
             **self._hub_dataset_kwargs(),
         )

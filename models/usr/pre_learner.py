@@ -109,7 +109,7 @@ class SSLLearner(LightningModule):
         opt.step()
         sch.step()
 
-        self.log('monitoring_step', self.trainer.global_step)  # this is to save the last k checkpoints
+        self.log("monitoring_step", float(self.trainer.global_step))  # last-k checkpoints; PL wants float metrics
 
     def on_train_batch_start(self, data, batch_idx):
         self.padding_mask = make_non_pad_mask(data["video_lengths"]).to(data["video"].device)

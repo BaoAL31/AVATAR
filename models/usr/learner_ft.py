@@ -189,7 +189,7 @@ class SSLLearner(LightningModule):
         loss += self.cfg.model.ctc_rel_weight*(1-self.cfg.model.v_rel_weight)*loss_ctc_a
         loss += self.cfg.model.ctc_rel_weight*(1-self.cfg.model.v_rel_weight)*loss_ctc_av
 
-        self.log('monitoring_step', self.trainer.global_step)  # this is to save the last k checkpoints   
+        self.log("monitoring_step", float(self.trainer.global_step))  # last-k checkpoints; PL wants float metrics
 
         return loss     
     

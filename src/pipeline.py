@@ -8,8 +8,8 @@ from src.diarization.run_av_diarization import Diarizer
 from src.preprocess.mouth_crop import MouthCropper
 DATA_DIR_DEFAULT = "./data"
 DEVICE_DEFAULT = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-USR_PYTHON = "/home/jembo/miniconda3/envs/usr_env/bin/python"
-RUN_USR_SCRIPT = "/home/jembo/AVATAR/src/transcription/run_usr.py"
+USR_PYTHON = "/home/hoangbng/miniconda3/envs/usr_env/bin/python"
+RUN_USR_SCRIPT = "/home/hoangbng/AVATAR/AVATAR/src/transcription/run_usr.py"
 
 
 class Pipeline:

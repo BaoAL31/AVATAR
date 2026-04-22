@@ -17,8 +17,8 @@ from espnet.nets.pytorch_backend.e2e_asr_transformer import E2E
 from espnet.nets.scorers.length_bonus import LengthBonus
 from utils.utils import UNIGRAM1000_LIST
 
-CKPT_PATH = "/home/jembo/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth"
-USR_CONF  = "/home/jembo/AVATAR/models/usr/conf"
+CKPT_PATH = "/home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth"
+USR_CONF  = "/home/hoangbng/AVATAR/AVATAR/models/usr/conf"
 
 
 class Transcriber:

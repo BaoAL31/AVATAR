@@ -9,17 +9,17 @@ def test_load_and_preprocess_track():
     print("Audio tensor shape:", audio.shape)
 
 def test_load_usr_model():
-    model, cfg = load_model('/home/jembo/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth')
+    model, cfg = load_model('/home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth')
     print("Model loaded!")
     print(model)
 
 def test_transcribe_single():  
-    model, cfg = load_model('/home/jembo/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth')
+    model, cfg = load_model('/home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth')
     transcription = transcribe_track(VIDEO_NAME, 0, model, cfg)
     print("Transcription:", transcription)
 
 def test_transcribe_video():
-    model, cfg = load_model('/home/jembo/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth')
+    model, cfg = load_model('/home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth')
     results = transcribe_video(VIDEO_NAME, model, cfg)
     for track_idx, transcription in results:
         print(f"Track {track_idx}: {transcription}")

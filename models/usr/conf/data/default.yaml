@@ -22,6 +22,10 @@ lrs3_audio_dir:
 vox2_video_dir:
 vox2_audio_dir:
 skip_fails: True
+# FT only: use first N rows of each manifest (null = full file). Handy for quick runs without rebuilding CSV.
+max_train_samples:
+max_val_samples:
+max_test_samples:
 # Manifest CSV: tag,<relative_mp4>,<frames>,<label_ids>. Those same relative paths are Hub
 # filenames when hub.<tag>_repo_id is set (no manifest change). hf_hub_cache is the Hub
 # download root (HF_HUB_CACHE); actual files live under .../datasets--org--name/snapshots/<rev>/...
@@ -29,7 +33,7 @@ hf_hub_cache: ${hf_hub_cache_path:}
 # Hub media loading. Two modes per dataset tag:
 #   repo_id:     single repo for plain tag (e.g. tag=lrs2 → hub.lrs2_repo_id)
 #   repo_prefix: sharded repos for tags like lrs2_03 → {prefix}_03 (e.g. HBaoAL/LRS2_03)
-# manifest file_path is the Hub filename (e.g. <stem>/<stem>.mp4); .wav/.npz derived from same stem.
+# manifest file_path is the Hub filename (e.g. <stem>/<stem>.mp4); .wav and .npz use the same path with .wav / .npz.
 hub:
   lrs2_repo_id:
   lrs2_repo_prefix:
@@ -40,6 +44,9 @@ hub:
   repo_type: dataset
   revision:
   cache_dir:
+  # If true, rank 0 downloads every train-manifest file from the Hub in parallel before fit (warms cache). Large manifests can take a long time; leave false to rely on lazy download + per-clip parallel fetches below.
+  prefetch_manifest: false
+  prefetch_max_workers: 16
 # AU-aware training: LibreFace NPZ dirs (same stem as video basename, e.g. clip.npz)
 au:
   enabled: false
