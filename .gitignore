@@ -4,6 +4,10 @@ data/raw
 data/libreface_output
 data/libreface_out
 data/libreface_weights
+data/train_manifest.csv
+data/val_manifest.csv
+data/.usr_manifest_checkpoint.txt
+data/hf_npz_stems.txt
 tmp/
 
 # model weights
@@ -13,6 +17,19 @@ tmp/
 
 # save files
 *.save
+
+# large/sample media and generated assets
+models/av-diarization/sample/sample.mp4
+models/av-diarization/assets/visualize.gif
+models/av-diarization/assets/voxconverse.jpg
+models/av-diarization/assets/timeline.png
+models/usr/overview.png
+models/usr/example.avi
+models/usr/example.wav
+
+# generated fairseq extension sources
+models/usr/fairseq_manual/data_utils_fast.cpp
+models/usr/fairseq_manual/data_utils_fast.c
 
 # python
 __pycache__/
