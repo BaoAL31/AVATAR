@@ -8,6 +8,7 @@ defaults:
   - model: default
   - optimizer: default
   - trainer: train
+  - override model/backbone: resnet_transformer_baseplus
 
 hydra:
   output_subdir: null
@@ -35,6 +36,7 @@ slurm_job_id:
 # Model/backbone for AU + LoRA finetuning
 model:
   pretrained_model_path: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth
+  pretrained_lm_path: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/usr_lm_lrs2.pth
   transfer_only_encoder: True
   lora:
     enabled: True
@@ -74,6 +76,9 @@ data:
     prefetch_max_workers: 2
   au:
     enabled: True
+
+decode:
+  lm_weight: 0.05
 
 # Keep single-process defaults for local 1-GPU testing
 trainer:

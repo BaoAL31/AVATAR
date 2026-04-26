@@ -4,4 +4,4 @@ name: ${experiment_name}
 offline: False
 project: ${project_name}
 mode: online
-entity: default
+entity: ${oc.env:WANDB_ENTITY,baoal31}

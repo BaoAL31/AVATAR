@@ -30,6 +30,12 @@ class SSLLearner(LightningModule):
         if cfg.model.pretrained_model_path:
             print("Load pretrained model weights")
             ckpt = torch.load(cfg.model.pretrained_model_path, map_location=lambda storage, loc: storage)
+            if isinstance(ckpt, dict) and all(
+                isinstance(k, str) and k.startswith("_orig_mod.") for k in ckpt.keys()
+            ):
+                # Checkpoints saved from torch.compile() often prefix parameters with "_orig_mod.".
+                # Strip it so strict loading works with non-compiled model instances.
+                ckpt = {k[len("_orig_mod."):]: v for k, v in ckpt.items()}
 
             if cfg.model.transfer_only_encoder:
                 ckpt = {k[39:]: v for k, v in ckpt.items() if k.startswith('model._orig_mod.model.backbone.encoder')}
@@ -302,6 +308,8 @@ class SSLLearner(LightningModule):
         self.log("momentum", momentum, on_step=False, on_epoch=True, batch_size=1, sync_dist=True)
 
     def shared_val_test_step(self, data):
+        if data.get("video") is None or data.get("audio") is None or data.get("label") is None:
+            return
         video, audio, label = data["video"], data["audio"], data["label"]
         padding_mask_v = make_non_pad_mask(data["video_lengths"]).to(data["video"].device).unsqueeze(-2)
 
@@ -334,9 +342,9 @@ class SSLLearner(LightningModule):
     def validation_step(self, data, batch_idx):
         self.shared_val_test_step(data)
 
-    def calculate_wer(self, video, audio, padding_mask, labels):
+    def calculate_wer(self, video, audio, padding_mask, labels, texts=None):
         labels = labels.squeeze(1)
-        for vid, aud, label, mask in zip(video, audio, labels, padding_mask):
+        for i, (vid, aud, label, mask) in enumerate(zip(video, audio, labels, padding_mask)):
             feat_v, feat_a, feat_av = self.model.model.get_encoded_features(
                 vid.unsqueeze(0), aud.unsqueeze(0), mask.unsqueeze(0).unsqueeze(-2)
             )
@@ -377,8 +385,14 @@ class SSLLearner(LightningModule):
             transcription_av = add_results_to_json(nbest_hyps_av, self.token_list)
             transcription_av = transcription_av.replace("<eos>", "")
 
-            label = label[label != self.ignore_id]
-            groundtruth = ids_to_str(label, self.token_list)
+            groundtruth = None
+            if texts is not None and i < len(texts):
+                t = texts[i]
+                if isinstance(t, str) and t.strip():
+                    groundtruth = t.strip()
+            if groundtruth is None:
+                label = label[label != self.ignore_id]
+                groundtruth = ids_to_str(label, self.token_list)
 
             groundtruth = groundtruth.replace("▁", " ").strip()
             transcription_v = transcription_v.replace("▁", " ").strip()
@@ -390,6 +404,8 @@ class SSLLearner(LightningModule):
             self.wer_av.update(transcription_av, groundtruth)
 
     def test_step(self, data, batch_idx):
+        if data.get("video") is None or data.get("audio") is None or data.get("label") is None:
+            return
         lengths = torch.tensor(data["video_lengths"], device=data["video"].device)
         padding_mask = make_non_pad_mask(lengths).to(lengths.device)
         self.calculate_wer(
@@ -397,6 +413,7 @@ class SSLLearner(LightningModule):
             data["audio"].transpose(1, 2),
             padding_mask, 
             data["label"], 
+            texts=data.get("text"),
         )
 
         print(self.wer_video.compute())

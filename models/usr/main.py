@@ -1,6 +1,8 @@
 import logging
 import os
 
+import utils.hydra_traceback_compat  # noqa: F401  # before hydra (Py3.10 + hydra-core 1.1.x)
+
 import hydra
 from hydra.utils import instantiate
 from pytorch_lightning import Trainer, seed_everything

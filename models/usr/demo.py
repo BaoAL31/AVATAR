@@ -1,11 +1,12 @@
 import os
 
 import cv2
-import hydra
 import numpy as np
 import pytorchvideo
 import torch
 import torchaudio
+import utils.hydra_traceback_compat  # noqa: F401
+import hydra
 from torchvision.transforms import (
     CenterCrop,
     Compose,
@@ -91,6 +92,29 @@ def get_beam_search(cfg, model):
     return beam_search
 
 
+def normalize_ckpt_for_demo(ckpt):
+    """Normalize wrapper/prefix variants to E2E backbone keys expected by demo."""
+    if isinstance(ckpt, dict) and "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
+        ckpt = ckpt["state_dict"]
+    if not isinstance(ckpt, dict):
+        return ckpt
+
+    prefixes = ("_orig_mod.", "model.backbone.", "module.")
+    out = {}
+    for k, v in ckpt.items():
+        nk = k
+        if isinstance(nk, str):
+            changed = True
+            while changed:
+                changed = False
+                for p in prefixes:
+                    if nk.startswith(p):
+                        nk = nk[len(p):]
+                        changed = True
+        out[nk] = v
+    return out
+
+
 @hydra.main(config_path="conf", config_name="config")
 def main(cfg):
     video_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "example.avi")
@@ -101,9 +125,10 @@ def main(cfg):
 
     video = video_transform()(video)
 
-    model = torch.compile(E2E(1049, cfg.model.backbone))
+    model = E2E(1049, cfg.model.backbone)
 
     ckpt = torch.load(cfg.model.pretrained_model_path, map_location=lambda storage, loc: storage)
+    ckpt = normalize_ckpt_for_demo(ckpt)
     model.load_state_dict(ckpt)
 
     beam_search = get_beam_search(cfg, model)

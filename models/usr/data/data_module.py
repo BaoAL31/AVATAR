@@ -53,7 +53,8 @@ def collate_pad(batch):
         batch_out[data_type + '_lengths'] = sample_lengths
     
     batch_out["path"] = [s["path"] for s in batch if s["path"] is not None]
-        
+    batch_out["text"] = [s.get("text") for s in batch if s["path"] is not None]
+    
     return batch_out
 
 
@@ -93,6 +94,44 @@ class DataModule(LightningDataModule):
 
 
         return Compose(transform), Compose(transform_aug)
+
+    def _hub_dataset_kwargs(self):
+        h = getattr(self.cfg.data, "hub", None)
+        if not h:
+            return {
+                "hub_repo_ids": {},
+                "hub_repo_prefixes": {},
+                "hub_repo_type": "dataset",
+                "hub_revision": None,
+                "hub_cache_dir": None,
+            }
+        rev = h.get("revision")
+        if rev is not None and str(rev).strip() == "":
+            rev = None
+        ids = {
+            "lrs2": (h.get("lrs2_repo_id") or "").strip(),
+            "lrs3": (h.get("lrs3_repo_id") or "").strip(),
+            "vox2": (h.get("vox2_repo_id") or "").strip(),
+        }
+        prefixes = {
+            "lrs2": (h.get("lrs2_repo_prefix") or "").strip(),
+            "lrs3": (h.get("lrs3_repo_prefix") or "").strip(),
+            "vox2": (h.get("vox2_repo_prefix") or "").strip(),
+        }
+        use_hub = any(ids.values()) or any(prefixes.values())
+        hub_cache_dir = None
+        if use_hub:
+            cd = (h.get("cache_dir") or "").strip()
+            if cd:
+                os.makedirs(cd, exist_ok=True)
+                hub_cache_dir = cd
+        return {
+            "hub_repo_ids": ids,
+            "hub_repo_prefixes": prefixes,
+            "hub_repo_type": h.get("repo_type") or "dataset",
+            "hub_revision": rev,
+            "hub_cache_dir": hub_cache_dir,
+        }
 
     def _raw_audio_transform(self, mode):
         args = self.cfg.data
@@ -134,6 +173,7 @@ class DataModule(LightningDataModule):
             transforms={
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
+            **self._hub_dataset_kwargs(),
         )
 
         train_ds_label = AVDataset(
@@ -146,6 +186,7 @@ class DataModule(LightningDataModule):
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
             skip_fails=self.cfg.data.skip_fails,
+            **self._hub_dataset_kwargs(),
         )
 
         sampler_unlabel = ByFrameCountSampler(train_ds_unlabel, self.cfg.data.frames_per_gpu)
@@ -175,6 +216,7 @@ class DataModule(LightningDataModule):
             transforms={
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
+            **self._hub_dataset_kwargs(),
         )
         sampler = ByFrameCountSampler(val_ds, self.cfg.data.frames_per_gpu_val, shuffle=False)
         if self.total_gpus > 1:
@@ -196,6 +238,7 @@ class DataModule(LightningDataModule):
             transforms={
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
+            **self._hub_dataset_kwargs(),
         )
         sampler = ByFrameCountSampler(test_ds, self.cfg.data.frames_per_gpu_val, shuffle=False)
         if self.total_gpus > 1:

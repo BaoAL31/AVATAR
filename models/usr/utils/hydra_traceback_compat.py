@@ -23,3 +23,9 @@ def _print_exception_compat(*args, **kwargs):
 
 
 traceback.print_exception = _print_exception_compat  # type: ignore[assignment]
+
+try:
+    import hydra._internal.utils as _hydra_utils  # type: ignore
+    _hydra_utils.print_exception = _print_exception_compat  # type: ignore[attr-defined]
+except Exception:
+    pass
