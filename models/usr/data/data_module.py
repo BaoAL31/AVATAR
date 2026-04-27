@@ -73,10 +73,11 @@ class DataModule(LightningDataModule):
         ] + (
             [
                 RandomCrop(args.crop_type.random_crop_dim),
-                Resize(args.crop_type.resize_dim),
+                Resize(args.crop_type.resize_dim, antialias=True),
                 RandomHorizontalFlip(args.horizontal_flip_prob)
             ]
-            if mode == "train" else [CenterCrop(args.crop_type.random_crop_dim), Resize(args.crop_type.resize_dim)]
+            if mode == "train"
+            else [CenterCrop(args.crop_type.random_crop_dim), Resize(args.crop_type.resize_dim, antialias=True)]
         )
         if self.cfg.data.channel.in_video_channels == 1:
             transform.extend([Lambda(lambda x: x.transpose(0, 1)), Grayscale(), Lambda(lambda x: x.transpose(0, 1))])
@@ -173,6 +174,7 @@ class DataModule(LightningDataModule):
             transforms={
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
+            max_frame_count=self.cfg.data.frames_per_gpu,
             **self._hub_dataset_kwargs(),
         )
 
@@ -186,6 +188,7 @@ class DataModule(LightningDataModule):
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
             skip_fails=self.cfg.data.skip_fails,
+            max_frame_count=self.cfg.data.frames_per_gpu_labelled,
             **self._hub_dataset_kwargs(),
         )
 
@@ -216,6 +219,7 @@ class DataModule(LightningDataModule):
             transforms={
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
+            max_frame_count=self.cfg.data.frames_per_gpu_val,
             **self._hub_dataset_kwargs(),
         )
         sampler = ByFrameCountSampler(val_ds, self.cfg.data.frames_per_gpu_val, shuffle=False)
@@ -238,6 +242,7 @@ class DataModule(LightningDataModule):
             transforms={
                 'video': transform_video, 'video_aug': transform_video_aug, 'audio': transform_audio, 'audio_aug': transform_audio_aug
             },
+            max_frame_count=self.cfg.data.frames_per_gpu_val,
             **self._hub_dataset_kwargs(),
         )
         sampler = ByFrameCountSampler(test_ds, self.cfg.data.frames_per_gpu_val, shuffle=False)

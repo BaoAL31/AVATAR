@@ -43,7 +43,17 @@ class SSLLearner(LightningModule):
                 self.model.model.backbone.encoder.load_state_dict(ckpt, strict=False)
                 self.model.model.target_backbone.encoder.load_state_dict(ckpt, strict=False)
             else:
-                self.model.load_state_dict(ckpt)
+                incompatible = self.model.load_state_dict(ckpt, strict=False)
+                if incompatible.missing_keys:
+                    print(
+                        f"Non-strict checkpoint load: {len(incompatible.missing_keys)} missing keys "
+                        f"(e.g. {incompatible.missing_keys[:6]})"
+                    )
+                if incompatible.unexpected_keys:
+                    print(
+                        f"Non-strict checkpoint load: {len(incompatible.unexpected_keys)} unexpected keys "
+                        f"(e.g. {incompatible.unexpected_keys[:6]})"
+                    )
 
         if cfg.debug.log_gradients:
             self.logger.experiment.watch(self.model, log="gradients")

@@ -293,6 +293,12 @@ def run_hub_mode(args, table: dict, unk_id: int) -> None:
         mode_train = mode_val = "w"
 
     n_new_train = n_new_val = n_skip = n_already = n_skip_landmarks = 0
+    n_skip_missing_txt = 0
+    n_skip_empty_text = 0
+    n_skip_empty_ids = 0
+    n_skip_missing_wav = 0
+    n_skip_missing_avi = 0
+    n_skip_missing_frames = 0
     f_train = train_path.open(mode_train, encoding="utf-8")
     f_val = val_path.open(mode_val, encoding="utf-8")
 
@@ -307,15 +313,16 @@ def run_hub_mode(args, table: dict, unk_id: int) -> None:
             n_stems = len(by_shard[suffix])
             print(f"\n=== {repo_id} ({n_stems} stems) ===")
             repo_files = set()
-            if args.require_hub_wav or args.require_hub_avi:
-                print("Listing repo files for asset checks ...", end=" ", flush=True)
-                try:
-                    repo_files = set(HfApi().list_repo_files(repo_id=repo_id, repo_type="dataset"))
-                    print(f"{len(repo_files)} files")
-                except Exception as e:
-                    print(f"FAILED: {e}", file=sys.stderr)
-                    continue
+            print("Listing repo files for asset checks ...", end=" ", flush=True)
+            try:
+                repo_files = set(HfApi().list_repo_files(repo_id=repo_id, repo_type="dataset"))
+                print(f"{len(repo_files)} files")
+            except Exception as e:
+                print(f"FAILED: {e}", file=sys.stderr)
+                continue
             patterns = ["*/*.txt"]
+            if args.hub_download_avi:
+                patterns.append("*/*.avi")
             if args.hub_download_mp4:
                 patterns.append("*/*.mp4")
             print(f"Downloading {', '.join(patterns)} ...", end=" ", flush=True)
@@ -355,23 +362,28 @@ def run_hub_mode(args, table: dict, unk_id: int) -> None:
                     txt_path = local_dir / stem / f"{stem}.txt"
                     if not txt_path.is_file():
                         n_skip += 1
+                        n_skip_missing_txt += 1
                         continue
 
                     text = parse_transcript_txt(txt_path)
                     if not text:
                         n_skip += 1
+                        n_skip_empty_text += 1
                         continue
 
                     ids = text_to_ids(text, table, unk_id)
                     if not ids:
                         n_skip += 1
+                        n_skip_empty_ids += 1
                         continue
 
-                    if args.require_hub_wav and wav_key not in repo_files:
+                    if wav_key not in repo_files:
                         n_skip += 1
+                        n_skip_missing_wav += 1
                         continue
-                    if args.require_hub_avi and avi_key not in repo_files:
+                    if avi_key not in repo_files:
                         n_skip += 1
+                        n_skip_missing_avi += 1
                         continue
 
                     clip_tag = f"{args.tag}_{suffix}"
@@ -383,15 +395,20 @@ def run_hub_mode(args, table: dict, unk_id: int) -> None:
                         repo_files=repo_files if repo_files else None,
                     )
 
+                    avi_path = local_dir / stem / f"{stem}.avi"
                     mp4_path = local_dir / stem / f"{stem}.mp4"
                     fc = frame_count_from_local_root(
                         args.frame_root, manifest_path, args.frame_ext
                     )
                     if fc is None:
-                        fc = video_frame_count(mp4_path) if mp4_path.is_file() else None
+                        if args.hub_download_avi and avi_path.is_file():
+                            fc = video_frame_count(avi_path)
+                        elif mp4_path.is_file():
+                            fc = video_frame_count(mp4_path)
                     if fc is None or fc <= 0:
                         if args.skip_missing_frames:
                             n_skip += 1
+                            n_skip_missing_frames += 1
                             continue
                         fc = 0
 
@@ -441,7 +458,14 @@ def run_hub_mode(args, table: dict, unk_id: int) -> None:
 
     print()
     print(f"Done. New rows: train +{n_new_train}, val +{n_new_val}")
-    print(f"Skipped (no transcript / empty ids): {n_skip}")
+    print(f"Skipped (total pre-row filters): {n_skip}")
+    print(f"  - missing transcript file (.txt): {n_skip_missing_txt}")
+    print(f"  - empty transcript text: {n_skip_empty_text}")
+    print(f"  - empty token ids: {n_skip_empty_ids}")
+    print(f"  - missing Hub .wav: {n_skip_missing_wav}")
+    print(f"  - missing Hub .avi: {n_skip_missing_avi}")
+    if args.skip_missing_frames:
+        print(f"  - missing/invalid frame count: {n_skip_missing_frames}")
     if args.landmarks_dir is not None:
         print(f"Skipped (missing/invalid landmarks): {n_skip_landmarks}")
     print(f"Skipped (already in checkpoint): {n_already}")
@@ -666,6 +690,11 @@ def main() -> None:
         help="Concurrent file downloads per shard (snapshot_download). Default: 16.",
     )
     ap.add_argument(
+        "--hub-download-avi",
+        action="store_true",
+        help="In --from-hub mode, also download .avi to compute frame counts directly from mouth-crops.",
+    )
+    ap.add_argument(
         "--hub-download-mp4",
         action="store_true",
         help="In --from-hub mode, also download .mp4 to compute frame counts. "
@@ -690,30 +719,6 @@ def main() -> None:
         default="auto",
         help="Extension in manifest file_path: .avi, .mp4, or auto. "
         "In auto mode, only mouth-crop paths (.avi by default) are used — never facetrack .mp4.",
-    )
-    ap.add_argument(
-        "--require-hub-wav",
-        action="store_true",
-        default=True,
-        help="In --from-hub mode, require stem/stem.wav to exist in shard repo (default: on).",
-    )
-    ap.add_argument(
-        "--no-require-hub-wav",
-        action="store_false",
-        dest="require_hub_wav",
-        help="Disable Hub WAV existence requirement.",
-    )
-    ap.add_argument(
-        "--require-hub-avi",
-        action="store_true",
-        default=True,
-        help="In --from-hub mode, require stem/stem.avi to exist in shard repo (default: on).",
-    )
-    ap.add_argument(
-        "--no-require-hub-avi",
-        action="store_false",
-        dest="require_hub_avi",
-        help="Disable Hub AVI existence requirement.",
     )
     ap.add_argument(
         "--max-train-rows",

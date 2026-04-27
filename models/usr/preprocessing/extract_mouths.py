@@ -1,5 +1,6 @@
 import argparse
 import os
+from collections import Counter
 
 import cv2
 from pathlib import Path
@@ -35,6 +36,11 @@ def load_args():
         default=12,
         type=int,
         help="window margin for smoothed landmarks",
+    )
+    parser.add_argument(
+        "--fail_log",
+        default=None,
+        help="optional path to write per-clip failures (csv-like text)",
     )
 
     args = parser.parse_args()
@@ -168,22 +174,69 @@ def get_video_clip(video_filename):
 def main():
     args = load_args()
     reference = np.load(args.mean_face)
+    fail_reasons = Counter()
+    fail_lines = []
+    generated = skipped_existing = failed = 0
 
     for path in tqdm(Path(args.src_dir).rglob("*.mp4")):
         relpath = os.path.relpath(path, args.src_dir)
 
         video_path = os.path.join(args.src_dir, relpath)
         landmarks_path = os.path.join(args.landmarks_dir, relpath[:-4] + ".npy")
-
-        video = get_video_clip(video_path)
-
-        landmarks = np.load(landmarks_path)
-        sequence = crop_patch(video, landmarks, reference, args)
-
         target_dir = os.path.join(args.tgt_dir, relpath[:-4])
-        os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+        out_avi = target_dir + ".avi"
 
-        save_video_lossless(target_dir, sequence, 25)
+        if os.path.isfile(out_avi):
+            skipped_existing += 1
+            continue
+
+        if not os.path.isfile(landmarks_path):
+            failed += 1
+            fail_reasons["missing_landmarks_npy"] += 1
+            fail_lines.append(f"{relpath},missing_landmarks_npy,")
+            continue
+
+        try:
+            video = get_video_clip(video_path)
+            if not video:
+                raise ValueError("video has zero frames")
+
+            landmarks = np.load(landmarks_path)
+            sequence = crop_patch(video, landmarks, reference, args)
+            if sequence.size == 0:
+                raise ValueError("empty cropped sequence")
+
+            os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+            save_video_lossless(target_dir, sequence, 25)
+            generated += 1
+        except ValueError as e:
+            failed += 1
+            fail_reasons["invalid_data"] += 1
+            fail_lines.append(f"{relpath},invalid_data,{str(e).replace(',', ';')}")
+        except Exception as e:
+            failed += 1
+            fail_reasons["extract_exception"] += 1
+            fail_lines.append(
+                f"{relpath},extract_exception,{type(e).__name__}:{str(e).replace(',', ';')}"
+            )
+
+    print(
+        f"Done. generated={generated} skipped_existing={skipped_existing} "
+        f"failed={failed} tgt_dir={args.tgt_dir}"
+    )
+    if failed:
+        print("Failure breakdown:")
+        for reason, count in sorted(fail_reasons.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"  - {reason}: {count}")
+
+    if args.fail_log:
+        fail_log = Path(args.fail_log).resolve()
+        fail_log.parent.mkdir(parents=True, exist_ok=True)
+        with fail_log.open("w", encoding="utf-8") as f:
+            f.write("relpath,reason,detail\n")
+            for line in fail_lines:
+                f.write(line + "\n")
+        print(f"Failure log: {fail_log} ({len(fail_lines)} rows)")
 
 
 if __name__ == "__main__":

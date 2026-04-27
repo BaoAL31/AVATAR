@@ -24,6 +24,7 @@ def hub_local_path(
 ) -> str:
     """Return a local path. Uses the Hugging Face hub cache unless ``cache_dir`` is set."""
     from huggingface_hub import hf_hub_download
+    from huggingface_hub.utils import HfHubHTTPError, LocalEntryNotFoundError
     from requests.exceptions import ConnectionError as RequestsConnectionError
     from requests.exceptions import ReadTimeout as RequestsReadTimeout
 
@@ -38,6 +39,24 @@ def hub_local_path(
     if os.environ.get("HF_MEDIA_LOCAL_ONLY", "").strip().lower() in ("1", "true", "yes", "on"):
         kwargs["local_files_only"] = True
 
+    def _is_retryable_hub_error(err: BaseException) -> bool:
+        """Retry temporary Hub-side/server-side failures and timeout-wrapped misses."""
+        if isinstance(err, HfHubHTTPError):
+            status_code = getattr(getattr(err, "response", None), "status_code", None)
+            return status_code is None or int(status_code) >= 500
+
+        if isinstance(err, LocalEntryNotFoundError):
+            # This can wrap transient Hub metadata/HEAD failures when cache is cold.
+            msg = str(err).lower()
+            return (
+                "taking longer than expected" in msg
+                or "gateway timeout" in msg
+                or "try again later" in msg
+                or "connection" in msg
+                or "timeout" in msg
+            )
+        return False
+
     force_download_next = False
     last_err: Optional[BaseException] = None
     for attempt in range(max_retries):
@@ -51,6 +70,13 @@ def hub_local_path(
             # jittered exponential backoff (Hub / XET can throttle under parallel workers)
             delay = min(2.0**attempt, 120.0) + random.uniform(0, 1.0)
             time.sleep(delay)
+        except (HfHubHTTPError, LocalEntryNotFoundError) as e:
+            last_err = e
+            if _is_retryable_hub_error(e):
+                delay = min(2.0**attempt, 120.0) + random.uniform(0, 1.0)
+                time.sleep(delay)
+                continue
+            raise
         except OSError as e:
             last_err = e
             # Recover from partial/corrupt cache entry (e.g., size 0 wav): retry forcing a fresh download.

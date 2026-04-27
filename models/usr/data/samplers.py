@@ -9,6 +9,16 @@ from torch.utils.data import Dataset, DistributedSampler, RandomSampler
 from torch.utils.data.sampler import Sampler
 
 
+def _normalize_batch_indices(batch):
+    """Ensure each yielded batch is an iterable of sample indices."""
+    if isinstance(batch, (list, tuple)):
+        return batch
+    if isinstance(batch, np.ndarray):
+        return batch.tolist()
+    # Handles scalar ints / numpy scalar types for single-item batches.
+    return [int(batch)]
+
+
 class ByFrameCountSampler(Sampler):
     def __init__(self, dataset, max_frames_per_gpu, shuffle=True, seed=0):
         self.dataset = dataset
@@ -129,7 +139,10 @@ class DistributedSamplerWrapper(DistributedSampler):
         # gathered = concat_all_gather_var_len(torch.tensor(list(super().__iter__())).cuda(dist.get_rank()))
 
         subsampler_indexes = self.dataset
-        return iter(itemgetter(*indexes_of_indexes)(subsampler_indexes))
+        selected = itemgetter(*indexes_of_indexes)(subsampler_indexes)
+        if isinstance(selected, tuple):
+            return iter(_normalize_batch_indices(b) for b in selected)
+        return iter((_normalize_batch_indices(selected),))
 
     def set_epoch(self, epoch):
         super().set_epoch(epoch)
@@ -149,4 +162,7 @@ class RandomSamplerWrapper(RandomSampler):
         self.dataset = DatasetFromSampler(self.sampler)
         indexes_of_indexes = super().__iter__()
         subsampler_indexes = self.dataset
-        return iter(itemgetter(*indexes_of_indexes)(subsampler_indexes))
+        selected = itemgetter(*indexes_of_indexes)(subsampler_indexes)
+        if isinstance(selected, tuple):
+            return iter(_normalize_batch_indices(b) for b in selected)
+        return iter((_normalize_batch_indices(selected),))

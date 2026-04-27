@@ -75,12 +75,19 @@ def get_param_groups(model, num_blocks, base_lr_enc, base_lr_other, lr_decay_rat
             group_id = _encoder_block_index(name)
             group_name = f"block_{group_id}"
             base_lr = max(layer_scales[group_id] * base_lr_enc, min_lr)
+        elif "backbone.encoder.au_fusion" in name:
+            group_name = "au_fusion"
+            base_lr = max(base_lr_other, min_lr)
         else:
-            assert not name.startswith("backbone.encoder")
+            # Keep unknown encoder submodules trainable under "other" instead of crashing.
+            if name.startswith("backbone.encoder"):
+                group_name = "other"
+                base_lr = max(base_lr_other, min_lr)
+            else:
+                group_name = "other"
+                base_lr = max(base_lr_other, min_lr)
             if name.startswith("target_backbone"):
                 print(name)
-            group_name = "other"
-            base_lr = max(base_lr_other, min_lr)
         
         if group_name not in param_groups:
             param_groups[group_name] = {

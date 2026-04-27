@@ -236,6 +236,9 @@ class AVDataset(Dataset):
                 c = int(count)
                 if self.max_frames_per_sample is not None:
                     c = min(c, int(self.max_frames_per_sample))
+                # Guard against invalid manifest rows (e.g. frame_count=0).
+                if c <= 0:
+                    continue
                 paths_counts_labels.append((tag, file_path, c, [int(lab) for lab in label.split()]))
                 if limit is not None and len(paths_counts_labels) >= int(limit):
                     break
@@ -292,6 +295,14 @@ class AVDataset(Dataset):
         # Match capped manifest length (fairseq: each sample must be <= frames_per_gpu / frames_per_gpu_val).
         if video.size(1) > count:
             video = video[:, :count].contiguous()
+        if video.size(1) <= 0:
+            self.num_fails += 1
+            if self.num_fails == 300:
+                raise ValueError("Too many file errors.")
+            out = {'video': None, 'audio': None, 'label': None}
+            if self.au_enabled:
+                out['au'] = None
+            return out
         audio = self.load_audio(audio_path)
         if audio is None:
             self.num_fails += 1

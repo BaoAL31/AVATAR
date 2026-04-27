@@ -8,6 +8,7 @@ defaults:
   - model: default
   - optimizer: default
   - trainer: train
+  - _self_
   - override model/backbone: resnet_transformer_baseplus
 
 hydra:
@@ -17,7 +18,7 @@ hydra:
 
 project_name: semi_supervised_usr
 experiment_name: usr_ft_lrs2_au_lora_8gb_test
-num_workers: 16
+num_workers: 14
 # HF Hub download tqdm bars (only when fetching uncached files). Override: hub_disable_progress_bars=false
 hub_disable_progress_bars: true
 log_wandb: True
@@ -36,8 +37,8 @@ slurm_job_id:
 # Model/backbone for AU + LoRA finetuning
 model:
   pretrained_model_path: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/baseplus_high_resource_lrs3vox2.pth
-  pretrained_lm_path: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/usr_lm_lrs2.pth
-  transfer_only_encoder: True
+  pretrained_lm_path:
+  transfer_only_encoder: False
   lora:
     enabled: True
   backbone:
@@ -56,13 +57,14 @@ data:
   # Max sum of video frames per batch (clips packed until total ≈ this). Lower if CUDA OOM.
   # Each clip is also capped to this length (fairseq requires no sample longer than max_tokens).
   # Paired with trainer.accumulate_grad_batches: 2 (~same optimizer “size” as 1100 single-step, lower peak VRAM).
-  frames_per_gpu: 1100
+  frames_per_gpu: 1000
   # Only used by semi-supervised data_module.py, not FT — harmless to leave or remove.
   frames_per_gpu_labelled: 1000
   # Val/test: same role as frames_per_gpu; often equal or slightly lower than train.
   frames_per_gpu_val: 1000
   dataset:
     train_csv: /home/hoangbng/AVATAR/AVATAR/data/train_manifest.csv
+    train_labelled_csv: /home/hoangbng/AVATAR/AVATAR/data/train_manifest.csv
     val_csv: /home/hoangbng/AVATAR/AVATAR/data/val_manifest.csv
     test_csv: /home/hoangbng/AVATAR/AVATAR/data/val_manifest.csv
   # Optional: limit CSV rows without rebuilding (see data/default.yaml). Example: max_train_samples: 8000
@@ -78,7 +80,7 @@ data:
     enabled: True
 
 decode:
-  lm_weight: 0.05
+  lm_weight: 0.0
 
 # Keep single-process defaults for local 1-GPU testing
 trainer:
@@ -86,6 +88,7 @@ trainer:
   devices: 1
   num_nodes: 1
   max_epochs: 10
+  num_sanity_val_steps: 0
   # ≤ batches per epoch (e.g. 42) so Lightning logs during the epoch (default 50 skips all step logs).
   log_every_n_steps: 1
   # Half-precision activations; big VRAM saver. Use 32 if you see NaNs.

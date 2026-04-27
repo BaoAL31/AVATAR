@@ -41,6 +41,7 @@ class AVDataset(Dataset):
             hub_repo_type="dataset",
             hub_revision=None,
             hub_cache_dir=None,
+            max_frame_count=None,
         ):
 
         self.data_path = data_path
@@ -59,6 +60,7 @@ class AVDataset(Dataset):
             rev = None
         self.hub_revision = rev
         self.hub_cache_dir = hub_cache_dir
+        self.max_frame_count = max_frame_count
 
         self.paths_counts_labels = self.configure_files()
         self.num_fails = 0
@@ -155,6 +157,9 @@ class AVDataset(Dataset):
         with open(self.data_path, "r") as f:
             for path_count_label in f.read().splitlines():
                 tag, file_path, count, label = path_count_label.split(",")
+                count_i = int(count)
+                if self.max_frame_count is not None and count_i > int(self.max_frame_count):
+                    continue
                 paths_counts_labels.append((tag, file_path, int(count), [int(lab) for lab in label.split()]))
         return paths_counts_labels
 
