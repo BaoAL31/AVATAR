@@ -91,7 +91,10 @@ graph LR
     CAT ==> TENC
     TENC ==> ENC
     ENC ==> DEC
+    LORA -.-> VENC
+    LORA -.-> APROJ
     LORA -.-> TENC
+    LORA -.-> DEC
     DEC ==> TR
 ```
 

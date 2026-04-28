@@ -65,6 +65,8 @@ def collate_pad(batch):
         batch_out[data_type] = c_batch
         batch_out[data_type + '_lengths'] = sample_lengths
 
+    batch_out["text"] = [s.get("text") for s in batch if s.get("video") is not None]
+
     if batch[0].get("au") is not None:
         samples = [s["au"] for s in batch if s.get("video") is not None and s.get("au") is not None]
         if samples:

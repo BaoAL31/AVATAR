@@ -115,7 +115,7 @@ def normalize_ckpt_for_demo(ckpt):
     return out
 
 
-@hydra.main(config_path="conf", config_name="config")
+@hydra.main(config_path="conf", config_name="config_minimal")
 def main(cfg):
     video_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "example.avi")
     audio_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "example.wav")

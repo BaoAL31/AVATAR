@@ -140,6 +140,19 @@ class AVDataset(Dataset):
             )
         return os.path.join(self._local_prefix("audio", tag), rel_wav)
 
+    def _resolve_text_path(self, tag: str, file_path: str) -> str:
+        rel_txt = self._posix_stem_ext(file_path, ".txt")
+        repo = self._hub_repo(tag)
+        if repo:
+            return hub_local_path(
+                repo,
+                rel_txt,
+                repo_type=self.hub_repo_type,
+                revision=self.hub_revision,
+                cache_dir=self.hub_cache_dir,
+            )
+        return os.path.join(self._local_prefix("video", tag), rel_txt)
+
     def _resolve_au_npz_path(self, tag: str, file_path: str) -> str:
         repo = self._hub_repo(tag)
         if repo:
@@ -152,6 +165,18 @@ class AVDataset(Dataset):
                 cache_dir=self.hub_cache_dir,
             )
         return self._au_npz_path(tag, file_path) or ""
+
+    @staticmethod
+    def _parse_transcript_txt(path: str):
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    s = line.strip()
+                    if s.lower().startswith("text:"):
+                        return s.split(":", 1)[1].strip()
+        except Exception:
+            return None
+        return None
 
     def _au_npz_path(self, tag: str, file_path: str):
         if not self.au_enabled:
@@ -321,7 +346,10 @@ class AVDataset(Dataset):
         audio_clean = self.transforms['audio'](audio.unsqueeze(0)).squeeze(0)
 
         out = {
-            'video': video_clean, 'audio': audio_clean, 'label': torch.tensor(label)
+            'video': video_clean,
+            'audio': audio_clean,
+            'label': torch.tensor(label),
+            'text': self._parse_transcript_txt(self._resolve_text_path(tag, file_path)),
         }
         if self.au_enabled:
             t_frames = video_clean.size(0)

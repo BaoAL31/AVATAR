@@ -44,7 +44,8 @@ logging.getLogger("lightning").propagate = False
 # __spec__ = None
 
 
-@hydra.main(config_path="conf", config_name="config")
+# Default finetuning recipe (Base Plus + LoRA). Override with --config-name (e.g. config_ft_lrs2_lora_base_high_lrs3).
+@hydra.main(config_path="conf", config_name="config_ft_lrs2_lora_baseplus_high_lrs3vox2")
 def main(cfg):
     apply_hub_download_ui_env(cfg)
     if cfg.fix_seed:

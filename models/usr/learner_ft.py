@@ -19,6 +19,44 @@ from utils.lora import inject_lora
 from utils.utils import ids_to_str, set_requires_grad, UNIGRAM1000_LIST, get_param_groups_ft
 
 
+def normalize_pretrained_ckpt(ckpt):
+    """Normalize wrapper/prefix variants to keys expected by SSLLearner/E2E."""
+    if isinstance(ckpt, dict) and "state_dict" in ckpt and isinstance(ckpt["state_dict"], dict):
+        ckpt = ckpt["state_dict"]
+    if not isinstance(ckpt, dict):
+        return ckpt
+
+    prefixes = (
+        "model._orig_mod.model.backbone.",
+        "_orig_mod.model.backbone.",
+        "model.backbone.",
+        "model.",
+        "_orig_mod.",
+        "module.",
+    )
+    out = {}
+    for k, v in ckpt.items():
+        nk = k
+        if isinstance(nk, str):
+            changed = True
+            while changed:
+                changed = False
+                for prefix in prefixes:
+                    if nk.startswith(prefix):
+                        nk = nk[len(prefix):]
+                        changed = True
+        out[nk] = v
+    return out
+
+
+def filter_e2e_compatible_ckpt(ckpt):
+    """Drop self-supervised-only weights not present on finetuning E2E models."""
+    if not isinstance(ckpt, dict):
+        return ckpt
+    drop_prefixes = ("target_backbone.", "out_layer_unlabelled_", "layer_norm.")
+    return {k: v for k, v in ckpt.items() if not k.startswith(drop_prefixes)}
+
+
 class SSLLearner(LightningModule):
     def __init__(self, cfg):
         super().__init__()
@@ -27,17 +65,32 @@ class SSLLearner(LightningModule):
 
         self.model = E2E(1049, cfg.model.backbone)
 
+        if cfg.model.lora.enabled:
+            self._enable_lora()
+
         if cfg.model.pretrained_model_path:
             print("Load pretrained model weights")
             ckpt = torch.load(cfg.model.pretrained_model_path, map_location=lambda storage, loc: storage)
+            ckpt = normalize_pretrained_ckpt(ckpt)
+            ckpt = filter_e2e_compatible_ckpt(ckpt)
 
             if cfg.model.transfer_only_encoder:
-                ckpt = {k[39:]: v for k, v in ckpt.items() if k.startswith('model._orig_mod.model.backbone.encoder')}
+                ckpt = {k: v for k, v in ckpt.items() if k.startswith("encoder")}
+                ckpt = {k[len("encoder.") :]: v for k, v in ckpt.items()}
                 ckpt = {k: v for k, v in ckpt.items() if not k.startswith("after_norm")}
                 self.model.encoder.load_state_dict(ckpt, strict=False)
             else:
-                _strict = not getattr(cfg.model.backbone, "use_au", False)
-                self.model.load_state_dict(ckpt, strict=_strict)
+                incompatible = self.model.load_state_dict(ckpt, strict=False)
+                if incompatible.missing_keys:
+                    print(
+                        f"Non-strict checkpoint load: {len(incompatible.missing_keys)} missing keys "
+                        f"(e.g. {incompatible.missing_keys[:6]})"
+                    )
+                if incompatible.unexpected_keys:
+                    print(
+                        f"Non-strict checkpoint load: {len(incompatible.unexpected_keys)} unexpected keys "
+                        f"(e.g. {incompatible.unexpected_keys[:6]})"
+                    )
 
         if getattr(cfg.model.backbone, "use_au", False):
             _au = getattr(cfg.data, "au", None)
@@ -46,9 +99,6 @@ class SSLLearner(LightningModule):
                     "Warning: model.backbone.use_au=True but data.au.enabled is not True — "
                     "batches without 'au' will use zeros for AU fusion."
                 )
-
-        if cfg.model.lora.enabled:
-            self._enable_lora()
 
         if cfg.compile_model:
             self.model = torch.compile(self.model)
@@ -62,7 +112,10 @@ class SSLLearner(LightningModule):
         self.beam_search_av = self.get_beam_search(self.model)
         self.wer_video = WER()
         self.wer_audio = WER()
-        self.wer_av = WER()    
+        self.wer_av = WER()
+        self.wer_video_val = WER()
+        self.wer_audio_val = WER()
+        self.wer_av_val = WER()
 
     def _enable_lora(self):
         lora_cfg = self.cfg.model.lora
@@ -224,8 +277,22 @@ class SSLLearner(LightningModule):
 
     def validation_step(self, data, batch_idx):
         self.shared_val_test_step(data)
+        lengths = torch.tensor(data["video_lengths"], device=data["video"].device)
+        padding_mask = make_non_pad_mask(lengths).to(lengths.device)
+        self.calculate_wer(
+            data["video"].squeeze(1),
+            data["audio"].transpose(1, 2),
+            padding_mask,
+            data["label"],
+            texts=data.get("text"),
+            au=data.get("au"),
+            metrics=(self.wer_video_val, self.wer_audio_val, self.wer_av_val),
+        )
 
-    def calculate_wer(self, video, audio, padding_mask, labels, au=None):
+    def calculate_wer(self, video, audio, padding_mask, labels, texts=None, au=None, metrics=None):
+        if metrics is None:
+            metrics = (self.wer_video, self.wer_audio, self.wer_av)
+        wer_video_metric, wer_audio_metric, wer_av_metric = metrics
         labels = labels.squeeze(1)
         for i, (vid, aud, label, mask) in enumerate(zip(video, audio, labels, padding_mask)):
             enc_kw = {}
@@ -275,17 +342,37 @@ class SSLLearner(LightningModule):
             transcription_av = add_results_to_json(nbest_hyps_av, self.token_list)
             transcription_av = transcription_av.replace("<eos>", "")
 
-            label = label[label != self.ignore_id]
-            groundtruth = ids_to_str(label, self.token_list)
+            groundtruth = None
+            if texts is not None and i < len(texts):
+                t = texts[i]
+                if isinstance(t, str) and t.strip():
+                    groundtruth = t.strip()
+            if groundtruth is None:
+                label = label[label != self.ignore_id]
+                groundtruth = ids_to_str(label, self.token_list)
 
             groundtruth = groundtruth.replace("▁", " ").strip()
             transcription_v = transcription_v.replace("▁", " ").strip()
             transcription_a = transcription_a.replace("▁", " ").strip()
             transcription_av = transcription_av.replace("▁", " ").strip()
 
-            self.wer_video.update(transcription_v, groundtruth)
-            self.wer_audio.update(transcription_a, groundtruth)
-            self.wer_av.update(transcription_av, groundtruth)
+            wer_video_metric.update(transcription_v, groundtruth)
+            wer_audio_metric.update(transcription_a, groundtruth)
+            wer_av_metric.update(transcription_av, groundtruth)
+
+    def on_validation_epoch_end(self):
+        if self.trainer.sanity_checking:
+            return
+
+        wer_video = self.wer_video_val.compute()
+        wer_audio = self.wer_audio_val.compute()
+        wer_av = self.wer_av_val.compute()
+        self.log("wer_video_val", wer_video, sync_dist=True)
+        self.log("wer_audio_val", wer_audio, sync_dist=True)
+        self.log("wer_av_val", wer_av, sync_dist=True)
+        self.wer_video_val.reset()
+        self.wer_audio_val.reset()
+        self.wer_av_val.reset()
 
     def test_step(self, data, batch_idx):
         lengths = torch.tensor(data["video_lengths"], device=data["video"].device)
@@ -295,6 +382,7 @@ class SSLLearner(LightningModule):
             data["audio"].transpose(1, 2),
             padding_mask, 
             data["label"],
+            texts=data.get("text"),
             au=data.get("au"),
         )
 

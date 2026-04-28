@@ -19,7 +19,7 @@ logging.getLogger("lightning").propagate = False
 # __spec__ = None
 
 
-@hydra.main(config_path="conf", config_name="config")
+@hydra.main(config_path="conf", config_name="config_minimal")
 def main(cfg):
     if cfg.fix_seed:
         seed_everything(42, workers=True)
