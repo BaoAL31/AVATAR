@@ -1,16 +1,18 @@
-# LRS2 finetuning: AU + LoRA, Base backbone (adim 512) + Base high-resource LRS3 checkpoint.
+# LRS2 LoRA Training: Minimal LoRA injection for debugging
+# Usage: python main_ft.py --config-name config_ft_lrs2_lora_minimal
+
 defaults:
   - checkpoint: last_k
   - data: default
-  - debug: no_debug
+  - debug: debug
   - decode: default
   - logger: default
   - logging: default
   - model: default
   - optimizer: default
   - trainer: train
-  - _self_
   - override model/backbone: resnet_transformer_base
+  - _self_
 
 hydra:
   output_subdir: null
@@ -18,8 +20,8 @@ hydra:
     dir: ${checkpoint.dirpath}/${experiment_name}
 
 project_name: semi_supervised_usr
-experiment_name: usr_ft_lrs2_lora_base_high_lrs3
-num_workers: 14
+experiment_name: usr_ft_lrs2_lora_base_1944-03-05-2026
+num_workers: 16
 hub_disable_progress_bars: true
 log_wandb: True
 replace_sampler_ddp: False
@@ -33,22 +35,27 @@ test_avg: False
 txt_file:
 slurm_job_id:
 
+# Model & Checkpoint
 model:
   pretrained_model_path: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/base_high_resource_lrs3.pth
-  pretrained_lm_path:
-  transfer_only_encoder: False
+  pretrained_lm_path: # Add LM path later if needed
+  transfer_only_encoder: False  # Load full encoder+decoder
   lora:
     enabled: True
+    freeze_base_model: True
+    rank: 8         
+    alpha: 16         
+    dropout: 0.05
   backbone:
-    use_au: True
+    use_au: False     # Disable AU for minimal test
 
+# Data
 data:
-  frames_per_gpu: 1000
-  frames_per_gpu_labelled: 1000
+  frames_per_gpu: 1100
+  frames_per_gpu_labelled: 1100
   frames_per_gpu_val: 1000
   dataset:
     train_csv: /home/hoangbng/AVATAR/AVATAR/data/train_manifest.csv
-    train_labelled_csv: /home/hoangbng/AVATAR/AVATAR/data/train_manifest.csv
     val_csv: /home/hoangbng/AVATAR/AVATAR/data/val_manifest.csv
     test_csv: /home/hoangbng/AVATAR/AVATAR/data/val_manifest.csv
   hub:
@@ -56,20 +63,43 @@ data:
     prefetch_manifest: false
     prefetch_max_workers: 2
   au:
-    enabled: True
+    enabled: False    # Disable AU for minimal test
 
+# Debug
+debug:
+  check_label_consistency: True
+  eval_after_lora_injection: False
+
+# Decoding
 decode:
   lm_weight: 0.0
+  ctc_weight: 0.1
+  beam_size: 40
+  penalty: 0.0
 
+# Trainer - disable validation for debugging
 trainer:
   strategy: auto
   devices: 1
   num_nodes: 1
-  max_epochs: 10
-  num_sanity_val_steps: 0
+  max_epochs: 10        
+  num_sanity_val_steps: 0  # Disable sanity check
+  # limit_val_batches: 0     # Disable validation during training
   log_every_n_steps: 1
   precision: bf16-mixed
   accumulate_grad_batches: 2
 
+# # Optimizer
+# optimizer:
+#   base_lr: 1.0e-4     # Increase LR for LoRA training (from 1e-5)
+#   base_lr_other: 1.0e-4
+#   weight_decay: 0.01
+#   betas: [0.9, 0.999]
+#   warmup_epochs: 1
+#   cosine_decay: True
+#   min_lr: 1.0e-7
+#   lr_decay_rate: 1.0
+
+# Checkpoint output dir
 checkpoint:
   dirpath: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/lora

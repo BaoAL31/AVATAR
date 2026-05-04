@@ -2,3 +2,7 @@ log_gradients: False
 deterministic: False
 profiler: null
 save_av_sample: False
+check_label_consistency: False
+label_mismatch_threshold: 0.3
+eval_after_lora_injection: False
+debug.log_ckpt_profile: False

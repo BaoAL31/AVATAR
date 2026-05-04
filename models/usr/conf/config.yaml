@@ -1,5 +1,0 @@
-# Generic Hydra primary config (Base backbone via model/default → resnet_transformer_base).
-# main_ft.py defaults to config_ft_lrs2_lora_baseplus_high_lrs3vox2; pass --config-name for
-# other recipes (e.g. config_ft_lrs2_lora_base_high_lrs3, config_ft_lrs2_og_usr_8gb).
-defaults:
-  - config_minimal

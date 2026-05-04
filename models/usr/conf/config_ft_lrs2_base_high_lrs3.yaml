@@ -1,0 +1,88 @@
+# LRS2 Evaluation: Original USR Base model (adim 512) + Base high-resource LRS3 checkpoint.
+# Usage: python main_ft.py --config-name config_ft_lrs2_usr_base_eval test=true
+
+defaults:
+  - checkpoint: last_k
+  - data: default
+  - debug: no_debug
+  - decode: default
+  - logger: default
+  - logging: default
+  - model: default
+  - optimizer: default
+  - trainer: train
+  - override model/backbone: resnet_transformer_base
+
+hydra:
+  output_subdir: null
+  run:
+    dir: ${checkpoint.dirpath}/${experiment_name}
+
+project_name: semi_supervised_usr
+experiment_name: usr_eval_lrs2_base_high_lrs3
+num_workers: 16
+hub_disable_progress_bars: true
+log_wandb: True
+replace_sampler_ddp: False
+compile_model: False
+fix_seed: True
+matmul_precision: high
+ckpt_path:
+gpus:
+test: True        # Set to True via CLI: test=true
+test_avg: False
+txt_file:
+slurm_job_id:
+
+# Model & Checkpoint
+model:
+  pretrained_model_path: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints/base_high_resource_lrs3.pth
+  pretrained_lm_path:  # Leave empty for baseline; add LM path later if needed
+  transfer_only_encoder: False  # Load full encoder+decoder for evaluation
+  lora:
+    enabled: False    # Original checkpoint contains no LoRA weights
+  backbone:
+    use_au: False     # Paper baseline does not fuse AU features
+
+# Data
+data:
+  frames_per_gpu: 1000
+  frames_per_gpu_labelled: 1000
+  frames_per_gpu_val: 1000
+  dataset:
+    train_csv: /home/hoangbng/AVATAR/AVATAR/data/train_manifest.csv
+    val_csv: /home/hoangbng/AVATAR/AVATAR/data/val_manifest.csv
+    test_csv: /home/hoangbng/AVATAR/AVATAR/data/val_manifest.csv
+  hub:
+    lrs2_repo_prefix: HBaoAL/LRS2
+    prefetch_manifest: false
+    prefetch_max_workers: 2
+  au:
+    enabled: False    # Prevents dataloader from expecting .npz files
+
+# Debug & WER
+debug:
+  check_label_consistency: False  # Skips the 100% mismatch warning (expected with subword tokens)
+
+# Decoding
+decode:
+  lm_weight: 0.0      # Baseline: no LM
+  ctc_weight: 0.1     # Paper default
+  beam_size: 40       # Paper default
+  penalty: 0.0
+
+# Trainer (eval-only overrides)
+trainer:
+  strategy: auto
+  devices: 1
+  num_nodes: 1
+  max_epochs: 1       # Required by schema; ignored when test=true
+  num_sanity_val_steps: 0
+  # limit_test_batches: 1   # Smoke test: run only 1 batch for quick testing
+  log_every_n_steps: 1
+  precision: bf16-mixed
+  accumulate_grad_batches: 1
+
+# Checkpoint output dir
+checkpoint:
+  dirpath: /home/hoangbng/AVATAR/AVATAR/models/usr/checkpoints

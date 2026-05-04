@@ -49,6 +49,7 @@ loss_mean: False
 mask_feats_loss: False
 pretrained_lm_path:
 avg_ckpts: 10
+export_avg_checkpoint: False
 pred_block_idx: 1
 detach: False
 lora:

@@ -147,21 +147,21 @@ class E2E(torch.nn.Module):
             self.att_unl_v = torch.nn.Linear(args.adim, 1049)
             
             self.ctc_unl_a = CTC(
-                1049, 
-                args.adim, 
-                args.dropout_rate, 
-                ctc_type=args.ctc_type, 
+                1049,
+                args.adim,
+                args.dropout_rate,
+                ctc_type=args.ctc_type,
                 reduce=True
             )
             self.ctc_unl_av = CTC(
-                1049, 
-                args.adim, 
-                args.dropout_rate, 
-                ctc_type=args.ctc_type, 
+                1049,
+                args.adim,
+                args.dropout_rate,
+                ctc_type=args.ctc_type,
                 reduce=True
             )
             self.ctc_unl_v = CTC(
-                1049, 
+                1049,
                 args.adim, 
                 args.dropout_rate, 
                 ctc_type=args.ctc_type, 

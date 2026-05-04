@@ -1,5 +1,7 @@
+from collections import Counter
 from fairseq_manual.data_utils import compute_mask_indices
 from hydra.utils import instantiate
+import math
 import torch
 from torch.optim import AdamW
 from pytorch_lightning import LightningModule
@@ -15,7 +17,7 @@ from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
 from espnet.nets.scorers.length_bonus import LengthBonus
 from metrics import WER
 from utils.au_npz import AU_FEATURE_DIM
-from utils.lora import inject_lora
+from utils.lora import LoRAConv1d, LoRAConv2d, LoRAConv3d, LoRALinear, inject_lora
 from utils.utils import ids_to_str, set_requires_grad, UNIGRAM1000_LIST, get_param_groups_ft
 
 
@@ -53,7 +55,15 @@ def filter_e2e_compatible_ckpt(ckpt):
     """Drop self-supervised-only weights not present on finetuning E2E models."""
     if not isinstance(ckpt, dict):
         return ckpt
-    drop_prefixes = ("target_backbone.", "out_layer_unlabelled_", "layer_norm.")
+    drop_prefixes = (
+        "target_backbone.",
+        "out_layer_unlabelled_",
+        "layer_norm.",
+        "beam_search_video.",
+        "beam_search_audio.",
+        "beam_search_av.",
+        "wer_",
+    )
     return {k: v for k, v in ckpt.items() if not k.startswith(drop_prefixes)}
 
 
@@ -64,33 +74,74 @@ class SSLLearner(LightningModule):
         self.cfg = cfg
 
         self.model = E2E(1049, cfg.model.backbone)
+        self._lora_modules = []
+        self._lora_bypassed = bool(getattr(self.cfg.debug, "lora_bypass_eval", False))
+        self._log_hyp_debug = bool(getattr(self.cfg.debug, "log_hyp_debug", False))
+        
+        # Debug: Print config values at init
+        print(f"[DEBUG __init__] cfg.debug type: {type(self.cfg.debug).__name__}")
+        print(f"[DEBUG __init__] cfg.debug contents: {dict(self.cfg.debug) if hasattr(self.cfg.debug, 'keys') else self.cfg.debug}")
+        eval_after_lora = getattr(self.cfg.debug, "eval_after_lora_injection", "NOT_SET")
+        print(f"[DEBUG __init__] eval_after_lora_injection = {eval_after_lora!r} (type: {type(eval_after_lora).__name__})")
 
-        if cfg.model.lora.enabled:
-            self._enable_lora()
+        # DO NOT inject LoRA yet - must load checkpoint first, then wrap with LoRA
+        # if cfg.model.lora.enabled:
+        #     self._enable_lora()
+
+        # Create beam_search objects BEFORE loading checkpoint
+        # This is needed so we can load beam_search state from checkpoint
+        self.beam_search_video = self.get_beam_search(self.model)
+        self.beam_search_audio = self.get_beam_search(self.model)
+        self.beam_search_av = self.get_beam_search(self.model)
 
         if cfg.model.pretrained_model_path:
             print("Load pretrained model weights")
-            ckpt = torch.load(cfg.model.pretrained_model_path, map_location=lambda storage, loc: storage)
+            ckpt = torch.load(cfg.model.pretrained_model_path, map_location="cpu")
+            
+            # Normalize checkpoint keys (strip prefixes like _orig_mod., model., etc.)
             ckpt = normalize_pretrained_ckpt(ckpt)
-            ckpt = filter_e2e_compatible_ckpt(ckpt)
-
+            
+            # Drop non-model keys (metrics, epoch, etc.) but KEEP beam_search lora keys
+            ckpt = {k: v for k, v in ckpt.items() if any(k.startswith(p) for p in ("encoder.", "decoder.", "ctc_", "au_fusion")) or "lora" in k.lower() or k.startswith("beam_search")}
+            
             if cfg.model.transfer_only_encoder:
-                ckpt = {k: v for k, v in ckpt.items() if k.startswith("encoder")}
-                ckpt = {k[len("encoder.") :]: v for k, v in ckpt.items()}
-                ckpt = {k: v for k, v in ckpt.items() if not k.startswith("after_norm")}
+                ckpt = {k[len("encoder."):]: v for k, v in ckpt.items() if k.startswith("encoder.") and not k.startswith("encoder.after_norm")}
                 self.model.encoder.load_state_dict(ckpt, strict=False)
             else:
-                incompatible = self.model.load_state_dict(ckpt, strict=False)
+                # Load into beam_search objects separately
+                # Checkpoint has: beam_search_video.nn_dict.decoder.layers.0...
+                # beam_search object expects: nn_dict.decoder.layers.0... (without the beam_search_video prefix)
+                for bs_name in ["beam_search_video", "beam_search_audio", "beam_search_av"]:
+                    bs_ckpt = {}
+                    prefix = bs_name + "."
+                    for k, v in ckpt.items():
+                        if k.startswith(prefix):
+                            new_k = k[len(prefix):]  # Strip "beam_search_video." -> "nn_dict.decoder.layers.0..."
+                            bs_ckpt[new_k] = v
+                    if bs_ckpt:
+                        getattr(self, bs_name).load_state_dict(bs_ckpt, strict=False)
+                        print(f"Loaded {len(bs_ckpt)} keys into {bs_name}")
+                
+                # Now load the rest into the main model
+                model_ckpt = {k: v for k, v in ckpt.items() if not k.startswith("beam_search")}
+                incompatible = self.model.load_state_dict(model_ckpt, strict=False)
                 if incompatible.missing_keys:
-                    print(
-                        f"Non-strict checkpoint load: {len(incompatible.missing_keys)} missing keys "
-                        f"(e.g. {incompatible.missing_keys[:6]})"
-                    )
+                    print(f"Non-strict checkpoint load: {len(incompatible.missing_keys)} missing keys")
+                    if cfg.debug.log_ckpt_profile:
+                        print(f"  Sample missing: {incompatible.missing_keys[:3]}")
                 if incompatible.unexpected_keys:
-                    print(
-                        f"Non-strict checkpoint load: {len(incompatible.unexpected_keys)} unexpected keys "
-                        f"(e.g. {incompatible.unexpected_keys[:6]})"
-                    )
+                    print(f"Non-strict checkpoint load: {len(incompatible.unexpected_keys)} unexpected keys")
+                    if cfg.debug.log_ckpt_profile:
+                        print(f"  Sample unexpected: {incompatible.unexpected_keys[:3]}")
+
+        # NOW inject LoRA AFTER checkpoint is loaded
+        # This ensures base weights are loaded before wrapping with LoRA adapters
+        if cfg.model.lora.enabled:
+            self._enable_lora()
+            # After _enable_lora(), print whether beam_search decoder shares weights with model decoder
+            bs_param = next(self.beam_search_video.nn_dict.decoder.parameters())
+            model_param = next(self.model.decoder.parameters())
+            print("Shared decoder?", bs_param.data_ptr() == model_param.data_ptr())
 
         if getattr(cfg.model.backbone, "use_au", False):
             _au = getattr(cfg.data, "au", None)
@@ -103,19 +154,19 @@ class SSLLearner(LightningModule):
         if cfg.compile_model:
             self.model = torch.compile(self.model)
 
-        if cfg.debug.log_gradients:
+        if cfg.debug.log_gradients and self.logger is not None:
             self.logger.experiment.watch(self.model, log="gradients")
         
         self.ignore_id = -1
-        self.beam_search_video = self.get_beam_search(self.model)
-        self.beam_search_audio = self.get_beam_search(self.model)
-        self.beam_search_av = self.get_beam_search(self.model)
         self.wer_video = WER()
         self.wer_audio = WER()
         self.wer_av = WER()
         self.wer_video_val = WER()
         self.wer_audio_val = WER()
         self.wer_av_val = WER()
+        if self._lora_bypassed:
+            self._set_lora_scaling(0.0)
+            print("Debug: LoRA bypass enabled for evaluation (scaling=0).")
 
     def _enable_lora(self):
         lora_cfg = self.cfg.model.lora
@@ -141,6 +192,43 @@ class SSLLearner(LightningModule):
         ):
             for p in self.model.encoder.au_fusion.parameters():
                 p.requires_grad = True
+        self._lora_modules = [
+            m
+            for m in self.model.modules()
+            if isinstance(m, (LoRALinear, LoRAConv1d, LoRAConv2d, LoRAConv3d))
+        ]
+
+    def _set_lora_scaling(self, value):
+        for module in self._lora_modules:
+            module.scaling = value
+
+    def _key_family(self, key):
+        if key.startswith("encoder."):
+            return "encoder"
+        if key.startswith("decoder."):
+            return "decoder"
+        if key.startswith("ctc_"):
+            return "ctc"
+        if ".lora_" in key or ".down.weight" in key or ".up.weight" in key:
+            return "lora_adapter"
+        if key.startswith("beam_search_"):
+            return "beam_search"
+        return "other"
+
+    def _maybe_print_ckpt_profile(self, title, ckpt):
+        if not bool(getattr(self.cfg.debug, "log_ckpt_profile", False)):
+            return
+        fam = Counter()
+        for key in ckpt.keys():
+            fam[self._key_family(key)] += 1
+        print(f"Checkpoint profile [{title}] total_keys={len(ckpt)} families={dict(fam)}")
+
+    def _maybe_print_incompatible_profile(self, incompatible):
+        if not bool(getattr(self.cfg.debug, "log_ckpt_profile", False)):
+            return
+        fam_missing = Counter(self._key_family(k) for k in incompatible.missing_keys)
+        fam_unexpected = Counter(self._key_family(k) for k in incompatible.unexpected_keys)
+        print(f"Incompatible profile missing={dict(fam_missing)} unexpected={dict(fam_unexpected)}")
 
     def get_beam_search(self, model):
         token_list = UNIGRAM1000_LIST
@@ -287,9 +375,10 @@ class SSLLearner(LightningModule):
             texts=data.get("text"),
             au=data.get("au"),
             metrics=(self.wer_video_val, self.wer_audio_val, self.wer_av_val),
+            batch_idx=batch_idx,
         )
 
-    def calculate_wer(self, video, audio, padding_mask, labels, texts=None, au=None, metrics=None):
+    def calculate_wer(self, video, audio, padding_mask, labels, texts=None, au=None, metrics=None, batch_idx=None):
         if metrics is None:
             metrics = (self.wer_video, self.wer_audio, self.wer_av)
         wer_video_metric, wer_audio_metric, wer_av_metric = metrics
@@ -355,6 +444,11 @@ class SSLLearner(LightningModule):
             transcription_v = transcription_v.replace("▁", " ").strip()
             transcription_a = transcription_a.replace("▁", " ").strip()
             transcription_av = transcription_av.replace("▁", " ").strip()
+            if self.cfg.debug.log_hyp_debug and batch_idx is not None and batch_idx == 0 and i < 3:
+                print(f"\n[DEBUG] GT: {groundtruth}")
+                print(f"[DEBUG] V : {transcription_v}")
+                print(f"[DEBUG] A : {transcription_a}")
+                print(f"[DEBUG] AV: {transcription_av}")
 
             wer_video_metric.update(transcription_v, groundtruth)
             wer_audio_metric.update(transcription_a, groundtruth)
@@ -384,6 +478,7 @@ class SSLLearner(LightningModule):
             data["label"],
             texts=data.get("text"),
             au=data.get("au"),
+            batch_idx=batch_idx,
         )
 
         print(self.wer_video.compute())
@@ -403,7 +498,148 @@ class SSLLearner(LightningModule):
         self.wer_video.reset()
         self.wer_audio.reset()
         self.wer_av.reset()
+
+    def on_train_start(self):
+        super().on_train_start()
+        # Optional label-transcript consistency check for training data
+        if bool(getattr(self.cfg.debug, "check_label_consistency", False)):
+            print("Running label-transcript consistency check on training data...")
+            try:
+                dl = self.trainer.datamodule.train_dataloader()
+            except Exception as e:
+                print(f"Failed to get training dataloader for label check: {e}")
+                return
+            
+            total_checked = 0
+            total_mismatched = 0
+            for batch_idx, data in enumerate(dl):
+                if batch_idx >= 5:  # Check first 5 batches
+                    break
+                labels = data["label"].squeeze(1)
+                texts = data.get("text", [])
+                batch_size = len(labels)
+                for sample_idx in range(min(5, batch_size)):  # Check first 5 samples per batch
+                    # Decode label to string
+                    label_ids = labels[sample_idx]
+                    label_ids = label_ids[label_ids != self.ignore_id]
+                    decoded_label = ids_to_str(label_ids, self.token_list)
+                    decoded_label = decoded_label.replace("▁", " ").strip()
+                    # Get ground truth text if available
+                    gt_text = None
+                    if sample_idx < len(texts):
+                        t = texts[sample_idx]
+                        if isinstance(t, str) and t.strip():
+                            gt_text = t.strip()
+                    # Log results and count mismatches
+                    if gt_text is not None:
+                        is_match = decoded_label == gt_text
+                        total_checked += 1
+                        if not is_match:
+                            total_mismatched += 1
+                        print(
+                            f"Label check | batch {batch_idx} sample {sample_idx}: "
+                            f"match={is_match} | decoded_label={decoded_label!r} | gt_text={gt_text!r}"
+                        )
+                    else:
+                        total_checked += 1
+                        print(
+                            f"Label check | batch {batch_idx} sample {sample_idx}: "
+                            f"no ground truth text available | decoded_label={decoded_label!r}"
+                        )
+            
+            # Calculate and report mismatch rate
+            mismatch_rate = total_mismatched / total_checked if total_checked > 0 else 0.0
+            print(f"\nLabel-transcript consistency check complete. Checked {total_checked} samples, {total_mismatched} mismatched (rate={mismatch_rate:.2%}).")
+            
+            # Warn if mismatch rate exceeds threshold
+            threshold = float(getattr(self.cfg.debug, "label_mismatch_threshold", 0.3))
+            if mismatch_rate > threshold:
+                print(f"\n{'='*80}")
+                print(f"WARNING: Label mismatch rate {mismatch_rate:.2%} exceeds threshold {threshold:.2%}!")
+                print("Training may collapse due to corrupted supervision labels.")
+                print(f"Check your training manifest CSV: {self.cfg.data.dataset.train_csv}")
+                print("Ensure label IDs match the reference transcripts in the 'text' field.")
+                print(f"{'='*80}\n")
+            else:
+                print(f"Label mismatch rate {mismatch_rate:.2%} is within threshold {threshold:.2%}.")
+        
+        # Debug evaluation after LoRA injection
+        if bool(getattr(self.cfg.debug, "eval_after_lora_injection", False)):
+            self._run_debug_eval_after_lora()
     
+    def _run_debug_eval_after_lora(self):
+        """Run a full validation evaluation after LoRA injection (same as epoch validation)."""
+        print(f"\n{'='*80}")
+        print(f"DEBUG: Running full validation eval after LoRA injection...")
+        print(f"{'='*80}\n")
+        
+        try:
+            # Set model to eval mode
+            self.model.eval()
+            
+            # Reset WER metrics for validation
+            self.wer_video_val.reset()
+            self.wer_audio_val.reset()
+            self.wer_av_val.reset()
+            
+            # Get validation dataloader
+            val_dl = self.trainer.datamodule.val_dataloader()
+            device = next(self.model.parameters()).device
+            
+            # Use tqdm for progress bar (like PL shows during validation)
+            try:
+                from tqdm import tqdm
+                val_iter = tqdm(val_dl, desc="Validation after LoRA", unit="batch")
+            except ImportError:
+                val_iter = val_dl
+            
+            # Run through all batches using the same logic as validation_step()
+            with torch.no_grad():
+                for batch_idx, data in enumerate(val_iter):
+                    # Move batch to device
+                    data = {k: v.to(device) if isinstance(v, torch.Tensor) else v
+                            for k, v in data.items()}
+                    
+                    # Call validation_step (same as what PL calls during validation)
+                    self.validation_step(data, batch_idx)
+            
+            # Compute WER (same logic as on_validation_epoch_end but without sanity check)
+            wer_video = self.wer_video_val.compute()
+            wer_audio = self.wer_audio_val.compute()
+            wer_av = self.wer_av_val.compute()
+            
+            # Print results to console
+            print(f"\n{'='*80}")
+            print(f"DEBUG EVAL AFTER LORA INJECTION - Full Validation Results:")
+            print(f"{'='*80}")
+            print(f"  WER_video:  {wer_video:.4f} ({wer_video*100:.2f}%)")
+            print(f"  WER_audio:  {wer_audio:.4f} ({wer_audio*100:.2f}%)")
+            print(f"  WER_av:     {wer_av:.4f} ({wer_av*100:.2f}%)")
+            print(f"{'='*80}\n")
+            
+            # Log to wandb if available
+            if self.logger is not None and hasattr(self.logger, 'experiment'):
+                self.logger.experiment.log({
+                    "debug/wer_video_after_lora": wer_video,
+                    "debug/wer_audio_after_lora": wer_audio,
+                    "debug/wer_av_after_lora": wer_av,
+                })
+            
+            # Set model back to train mode
+            self.model.train()
+            
+            print("[DEBUG] Full validation eval after LoRA injection completed successfully!")
+            
+        except Exception as e:
+            # Print error for immediate visibility (not re-raised to allow training to continue)
+            import traceback
+            print(f"[DEBUG _run_debug_eval_after_lora] ERROR: {e}")
+            traceback.print_exc()
+        
+        # Flush output to ensure visibility
+        import sys
+        sys.stdout.flush()
+
     def on_train_epoch_start(self):
         sampler = self.trainer.train_dataloader.batch_sampler
         if hasattr(sampler, "set_epoch"):
@@ -446,4 +682,3 @@ class SSLLearner(LightningModule):
         )
 
         return [optimizer], [scheduler]
-

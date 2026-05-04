@@ -1,4 +1,9 @@
 log_gradients: True
 deterministic: True
 profiler: simple
-save_av_sample: False
+save_av_sample: True
+check_label_consistency: True
+label_mismatch_threshold: 0.3
+eval_after_lora_injection: True
+log_hyp_debug: True
+log_ckpt_profile: False

@@ -51,8 +51,9 @@ def main(cfg):
     if cfg.fix_seed:
         seed_everything(42, workers=True)
 
-    print("The SLURM job ID for this run is {}".format(os.environ["SLURM_JOB_ID"]))
-    cfg.slurm_job_id = os.environ["SLURM_JOB_ID"]
+    slurm_job_id = os.environ.get("SLURM_JOB_ID", "local_test")
+    print("The SLURM job ID for this run is {}".format(slurm_job_id))
+    cfg.slurm_job_id = slurm_job_id
 
     cfg.gpus = torch.cuda.device_count()
     print('num gpus:', cfg.gpus)
@@ -84,44 +85,51 @@ def main(cfg):
     )
 
     if cfg.test:
-        trainer.test(learner, datamodule=data_module)
+        trainer.test(learner, datamodule=data_module, ckpt_path=cfg.ckpt_path or None)
     else:
         if not cfg.test_avg:
             trainer.fit(learner, data_module, ckpt_path=cfg.ckpt_path)
 
             if torch.distributed.is_available() and torch.distributed.is_initialized():
                 torch.distributed.destroy_process_group()
-        if trainer.is_global_zero:
-            ckpt_dir = os.path.join(cfg.checkpoint.dirpath, cfg.experiment_name)
-            # range(max_epochs - avg_ckpts, max_epochs) is wrong when max_epochs < avg_ckpts (e.g. 1 vs 10 → epoch=-9).
-            start_e = max(0, trainer.max_epochs - cfg.model.avg_ckpts)
-            last = [
-                os.path.join(ckpt_dir, f"epoch={n}.ckpt") for n in range(start_e, trainer.max_epochs)
-            ]
-            last = [p for p in last if os.path.isfile(p)]
-            if not last:
-                fallback = os.path.join(ckpt_dir, "last.ckpt")
-                if os.path.isfile(fallback):
-                    last = [fallback]
-            if not last:
-                print(
-                    f"Skipping checkpoint average: no epoch=*.ckpt under {ckpt_dir} "
-                    f"(expected epochs {start_e}..{trainer.max_epochs - 1})."
-                )
-            else:
-                avg = average_checkpoints(last)
+        
+        if cfg.model.export_avg_checkpoint:
+            if trainer.is_global_zero:
+                ckpt_dir = os.path.join(cfg.checkpoint.dirpath, cfg.experiment_name)
+                # range(max_epochs - avg_ckpts, max_epochs) is wrong when max_epochs < avg_ckpts (e.g. 1 vs 10 → epoch=-9).
+                start_e = max(0, trainer.max_epochs - cfg.model.avg_ckpts)
+                last = [
+                    os.path.join(ckpt_dir, f"epoch={n}.ckpt") for n in range(start_e, trainer.max_epochs)
+                ]
+                last = [p for p in last if os.path.isfile(p)]
+                if not last:
+                    fallback = os.path.join(ckpt_dir, "last.ckpt")
+                    if os.path.isfile(fallback):
+                        last = [fallback]
+                if not last:
+                    print(
+                        f"Skipping checkpoint average: no epoch=*.ckpt under {ckpt_dir} "
+                        f"(expected epochs {start_e}..{trainer.max_epochs - 1})."
+                    )
+                else:
+                    avg = average_checkpoints(last)
+                    if avg is None:
+                        print("Failed to average checkpoints. Skipping model export.")
+                    else:
+                        model_path = os.path.join(ckpt_dir, f"model_avg_{cfg.model.avg_ckpts}.pth")
+                        torch.save(avg, model_path)
+                        print(f"Saved averaged checkpoint to {model_path}")
 
-                model_path = os.path.join(ckpt_dir, f"model_avg_{cfg.model.avg_ckpts}.pth")
-                torch.save(avg, model_path)
-
-                # compute WER
-                cfg.gpus = cfg.trainer.devices = cfg.trainer.num_nodes = 1
-                cfg.model.pretrained_model_path = model_path
-                cfg.model.transfer_only_encoder = False
-                data_module = DataModule(cfg)
-                learner = SSLLearner(cfg)
-                trainer = Trainer(**cfg.trainer, logger=wandb_logger)
-                trainer.test(learner, datamodule=data_module)
+                        # compute WER
+                        cfg.gpus = cfg.trainer.devices = cfg.trainer.num_nodes = 1
+                        cfg.model.pretrained_model_path = model_path
+                        cfg.model.transfer_only_encoder = False
+                        data_module = DataModule(cfg)
+                        learner = SSLLearner(cfg)
+                        trainer = Trainer(**cfg.trainer, logger=wandb_logger)
+                        trainer.test(learner, datamodule=data_module)
+        else:
+            print("Checkpoint averaging disabled (model.export_avg_checkpoint=False). Skipping model_avg export.")
 
     
 if __name__ == "__main__":

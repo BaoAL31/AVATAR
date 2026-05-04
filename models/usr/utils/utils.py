@@ -27,22 +27,43 @@ def set_requires_grad(model, val):
 
 def average_checkpoints(last):
     avg = None
+    valid_count = 0
     for path in last:
-        states = torch.load(path)["state_dict"]
-        states = {k[6:]: v for k, v in states.items() if k.startswith("model.")}
+        ckpt = torch.load(path, map_location="cpu")
+        if "state_dict" not in ckpt:
+            print(f"Warning: Checkpoint {path} has no 'state_dict' key. Skipping.")
+            continue
+        states = ckpt["state_dict"]
+        # Strip "model." prefix from keys (PyTorch Lightning wraps model in "model." namespace)
+        filtered = {k[6:]: v for k, v in states.items() if k.startswith("model.")}
+        if not filtered:
+            print(f"Warning: Checkpoint {path} has no keys starting with 'model.'. Skipping.")
+            continue
         if avg is None:
-            avg = states
+            avg = filtered
+            valid_count = 1
         else:
+            # Check for key mismatch
+            if set(avg.keys()) != set(filtered.keys()):
+                missing = set(avg.keys()) - set(filtered.keys())
+                extra = set(filtered.keys()) - set(avg.keys())
+                print(f"Warning: Checkpoint {path} has key mismatch. Missing: {missing}, Extra: {extra}. Skipping.")
+                continue
             for k in avg.keys():
-                avg[k] += states[k]
+                avg[k] += filtered[k]
+            valid_count += 1
+
+    if avg is None or valid_count == 0:
+        print("Error: No valid checkpoints to average.")
+        return None
 
     # average
     for k in avg.keys():
         if avg[k] is not None:
             if avg[k].is_floating_point():
-                avg[k] /= len(last)
+                avg[k] /= valid_count
             else:
-                avg[k] //= len(last)
+                avg[k] //= valid_count
     
     return avg
 

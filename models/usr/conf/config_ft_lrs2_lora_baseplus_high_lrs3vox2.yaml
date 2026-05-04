@@ -58,6 +58,9 @@ data:
   au:
     enabled: True
 
+debug:
+  check_label_consistency: True
+
 decode:
   lm_weight: 0.0
 

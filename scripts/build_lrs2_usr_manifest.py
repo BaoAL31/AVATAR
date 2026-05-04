@@ -59,27 +59,56 @@ DEFAULT_LANDMARKS_DIR = Path("/home/hoangbng/Data/usr/landmarks")
 DEFAULT_FRAME_ROOT = Path("/home/hoangbng/Data/usr/mouth_crops")
 
 
-def load_unigram_table(units_path: Path) -> tuple[dict, int]:
-    table = {}
-    with units_path.open(encoding="utf-8") as f:
+def build_vocab(vocab_path: Path) -> tuple[dict, int]:
+    """Load vocabulary from unigram1000_units.txt, returning a token-to-ID dict and unk_id."""
+    token_to_id: Dict[str, int] = {}
+    unk_id = 1  # default <unk> ID
+    with vocab_path.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             token, tid = line.rsplit(None, 1)
-            table[token] = int(tid)
-    unk_id = table.get("<unk>", 1)
-    return table, unk_id
+            tid = int(tid)
+            token_to_id[token] = tid
+            if token == "<unk>":
+                unk_id = tid
+    return token_to_id, unk_id
 
 
-def words_to_token_strings(upper_sentence: str) -> list[str]:
-    words = re.findall(r"[A-Z0-9']+", upper_sentence.upper())
-    return ["\u2581" + w for w in words]
+def greedy_tokenize(text: str, vocab: Dict[str, int]) -> list[str]:
+    """
+    Greedy longest-match tokenization. Works like SentencePiece unigram decoding.
+    Splits text on spaces, prepends '▁' to each word, then segments each piece
+    using the longest matching token in vocab.
+    """
+    tokens: list[str] = []
+    # Extract words from text
+    for word in re.findall(r"[A-Z0-9']+", text.upper()):
+        word_with_space = "▁" + word
+        i = 0
+        while i < len(word_with_space):
+            longest_match = None
+            # Try to find the longest token starting at position i
+            for j in range(len(word_with_space), i, -1):
+                candidate = word_with_space[i:j]
+                if candidate in vocab:
+                    longest_match = candidate
+                    break
+            if longest_match:
+                tokens.append(longest_match)
+                i += len(longest_match)
+            else:
+                # Fallback for unknown characters (should not happen with proper vocab)
+                tokens.append("<unk>")
+                i += 1
+    return tokens
 
 
-def text_to_ids(text: str, table: dict, unk_id: int) -> list[int]:
-    toks = words_to_token_strings(text)
-    return [table.get(t, unk_id) for t in toks]
+def text_to_ids(text: str, vocab: Dict[str, int], unk_id: int) -> list[int]:
+    """Convert text to list of token IDs using greedy tokenization."""
+    tokens = greedy_tokenize(text, vocab)
+    return [vocab.get(t, unk_id) for t in tokens]
 
 
 def parse_transcript_txt(txt_path: Path) -> str | None:
@@ -240,7 +269,7 @@ def load_stems_file(path: Path) -> list[tuple[str, str]]:
 
 
 
-def run_hub_mode(args, table: dict, unk_id: int) -> None:
+def run_hub_mode(args, vocab: dict, unk_id: int) -> None:
     """Build manifest from HF Hub. Reads stems file for clip list + shard info."""
     from huggingface_hub import HfApi, snapshot_download
 
@@ -371,7 +400,7 @@ def run_hub_mode(args, table: dict, unk_id: int) -> None:
                         n_skip_empty_text += 1
                         continue
 
-                    ids = text_to_ids(text, table, unk_id)
+                    ids = text_to_ids(text, vocab, unk_id)
                     if not ids:
                         n_skip += 1
                         n_skip_empty_ids += 1
@@ -473,7 +502,7 @@ def run_hub_mode(args, table: dict, unk_id: int) -> None:
     print(f"         {val_path}")
 
 
-def run_local_mode(args, table: dict, unk_id: int) -> None:
+def run_local_mode(args, vocab: dict, unk_id: int) -> None:
     """Build manifest from local .txt + .mp4 pairs."""
     dataset_root = args.dataset_root.resolve()
     if not dataset_root.is_dir():
@@ -572,7 +601,7 @@ def run_local_mode(args, table: dict, unk_id: int) -> None:
                     n_skip += 1
                     continue
 
-                ids = text_to_ids(text, table, unk_id)
+                ids = text_to_ids(text, vocab, unk_id)
                 if not ids:
                     n_skip += 1
                     continue
@@ -774,16 +803,16 @@ def main() -> None:
     if args.video_ext != "auto" and not args.video_ext.startswith("."):
         args.video_ext = "." + args.video_ext
 
-    table, unk_id = load_unigram_table(args.units.resolve())
-    print(f"Loaded {len(table)} tokens; <unk> id = {unk_id}")
+    vocab, unk_id = build_vocab(args.units.resolve())
+    print(f"Loaded {len(vocab)} tokens; <unk> id = {unk_id}")
 
     if args.from_hub:
-        run_hub_mode(args, table, unk_id)
+        run_hub_mode(args, vocab, unk_id)
     else:
         if args.dataset_root is None:
             print("ERROR: --dataset-root required in local mode (or use --from-hub)", file=sys.stderr)
             sys.exit(1)
-        run_local_mode(args, table, unk_id)
+        run_local_mode(args, vocab, unk_id)
 
 
 if __name__ == "__main__":
