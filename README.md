@@ -140,11 +140,11 @@ python -m src.evaluation.render_demo \
 
 Scored on a 2-clip tuning subset of AVA-AVD test (0.25s collar).
 
-| Video | Ref dur (s) | DER (%) | Miss (%) | FA (%) | Conf (%) | JER (%) |
-|-------|------------|---------|---------|-------|---------|---------|
-| 1j20qq1JyX4_c_01 | 25.6 | **17.49** | 10.15 | 4.45 | 2.89 | 52.56 |
-| 2qQs3Y9OJX0_c_01 | 28.9 | 56.91 | 22.62 | 22.61 | 11.67 | 52.56 |
-| **Macro** | — | **37.20** | 16.39 | 13.53 | 7.28 | 52.56 |
+| Video | Ref dur (s) | DER (%) | Miss (%) | FA (%) | Conf (%) |
+|-------|------------|---------|---------|-------|---------|
+| 1j20qq1JyX4_c_01 | 25.6 | **17.49** | 10.15 | 4.45 | 2.89 |
+| 2qQs3Y9OJX0_c_01 | 28.9 | 56.91 | 22.62 | 22.61 | 11.67 |
+| **Macro** | — | **37.20** | 16.39 | 13.53 | 7.28 |
 
 **83.6% of on-screen speech is captured** by the AV diarizer. Full results and knob sweeps in [`reports/eval/diarization_results.md`](reports/eval/diarization_results.md).
 
