@@ -5,7 +5,13 @@ import os
 import logging
 from typing import Optional
 
-from speechbrain.inference.speaker import EncoderClassifier
+try:
+    # speechbrain >= 1.0
+    from speechbrain.inference.speaker import EncoderClassifier
+except ImportError:
+    # speechbrain < 1.0 (legacy path; required for torch 2.0.x compatibility
+    # because speechbrain 1.x has a double-free crash with torch <2.1).
+    from speechbrain.pretrained import EncoderClassifier
 import torch
 import torch.nn as nn
 import torchaudio
@@ -49,14 +55,25 @@ class SpeakerNet(nn.Module):
         self.model.eval()
         self.max_frames = max_frames
     
+    def _get_chunk_starts(self, num_samples: int) -> list:
+        """Return chunk start indices; always yields at least one chunk."""
+        window = self.max_frames * 160
+        if num_samples <= window:
+            return [0]
+        return list(range(0, num_samples - window, 3200))
+    
     @torch.no_grad()
     def run_resnetse34(self, fname: str) -> torch.Tensor:
         inp1, fs = torchaudio.load(fname)
         feats = []
-        for ii in range(0, inp1.size()[-1] - self.max_frames * 160, 3200):
+        window = self.max_frames * 160
+        for ii in self._get_chunk_starts(inp1.size()[-1]):
+            chunk = inp1[:, ii:ii + window]
+            if chunk.size(-1) < window:
+                chunk = nn.functional.pad(chunk, (0, window - chunk.size(-1)))
             feats.append(
                 self.model.forward(
-                    inp1[:, ii:ii + self.max_frames * 160].cuda()
+                    chunk.to(self.device)
                 ).detach().cpu()
             )
         return feats
@@ -65,9 +82,13 @@ class SpeakerNet(nn.Module):
     def run_ecapa(self, fname: str) -> torch.Tensor:
         inp1, fs = torchaudio.load(fname)
         feats = []
-        for ii in range(0, inp1.size()[-1] - self.max_frames * 160, 3200):
+        window = self.max_frames * 160
+        for ii in self._get_chunk_starts(inp1.size()[-1]):
+            chunk = inp1[:, ii:ii + window]
+            if chunk.size(-1) < window:
+                chunk = nn.functional.pad(chunk, (0, window - chunk.size(-1)))
             x = self.model.encode_batch(
-                inp1[:, ii:ii + self.max_frames * 160].cuda()
+                chunk.to(self.device)
             ).detach().cpu()
             feats.append(torch.squeeze(x, dim=1))
         return feats
@@ -89,6 +110,8 @@ class SpeakerNet(nn.Module):
         else:
             logging.info("Running ResNetSE34...")
             feats = self.run_resnetse34(filename)
+        if not feats:
+            raise RuntimeError(f"No speaker features extracted from {filename}")
         feats = torch.cat(feats, dim=0)
         return feats
 

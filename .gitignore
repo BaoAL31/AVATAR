@@ -1,14 +1,8 @@
-# data
-data/processed
-data/raw
-data/libreface_output
-data/libreface_out
-data/libreface_weights
-data/train_manifest.csv
-data/val_manifest.csv
-data/.usr_manifest_checkpoint.txt
-data/hf_npz_stems.txt
+# data (datasets, manifests, eval artifacts — all local/generated)
+data/
 tmp/
+graphify-out/
+reports/
 
 # model weights
 *.model
@@ -32,6 +26,9 @@ models/usr/example.wav
 models/usr/fairseq_manual/data_utils_fast.cpp
 models/usr/fairseq_manual/data_utils_fast.c
 
+# shell scripts (ad-hoc eval/diag/probe; use Python or experiment runbook)
+*.sh
+
 # python
 __pycache__/
 *.pyc
@@ -42,5 +39,13 @@ experiments/logs/
 experiments/results/
 
 *.egg-info/
+
+# AI agents / IDE tooling
+.cursor/
+.cursorrules
+.cursorrules.md
+AGENTS.md
 .aider*
+.claude/
 .env
+.venv

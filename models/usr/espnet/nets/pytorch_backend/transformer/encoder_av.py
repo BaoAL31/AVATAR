@@ -376,6 +376,19 @@ class Encoder(torch.nn.Module):
         """
         assert xs_v is not None or xs_a is not None
 
+        # AV temporal alignment: video frontend preserves T, audio frontend strides by 640.
+        # For the downstream `linear_av(cat([xs_v, xs_a], dim=-1))` to succeed, post-frontend
+        # T must match; this requires raw_audio_len == T_video * 640. Real mp4 streams routinely
+        # miss this by a frame or two, so pad-or-truncate audio here. AV path only; single-modality
+        # paths are unaffected.
+        if xs_v is not None and xs_a is not None:
+            target_T_a = xs_v.size(1) * 640
+            cur_T_a = xs_a.size(1)
+            if cur_T_a < target_T_a:
+                xs_a = F.pad(xs_a, (0, 0, 0, target_T_a - cur_T_a))
+            elif cur_T_a > target_T_a:
+                xs_a = xs_a[:, :target_T_a, :]
+
         if xs_v is not None:
             xs_v = self.frontend_v(xs_v)
         if xs_a is not None:

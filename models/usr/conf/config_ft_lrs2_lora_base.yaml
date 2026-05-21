@@ -20,7 +20,7 @@ hydra:
     dir: ${checkpoint.dirpath}/${experiment_name}
 
 project_name: semi_supervised_usr
-experiment_name: usr_ft_lrs2_lora_base_1944-03-05-2026
+experiment_name: usr_ft_lrs2_lora_base_1355-05-05-2026
 num_workers: 16
 hub_disable_progress_bars: true
 log_wandb: True
@@ -89,16 +89,16 @@ trainer:
   precision: bf16-mixed
   accumulate_grad_batches: 2
 
-# # Optimizer
-# optimizer:
-#   base_lr: 1.0e-4     # Increase LR for LoRA training (from 1e-5)
-#   base_lr_other: 1.0e-4
-#   weight_decay: 0.01
-#   betas: [0.9, 0.999]
-#   warmup_epochs: 1
-#   cosine_decay: True
-#   min_lr: 1.0e-7
-#   lr_decay_rate: 1.0
+# Optimizer
+optimizer:
+  base_lr: 1.0e-4     # Increase LR for LoRA training (from 1e-5)
+  base_lr_other: 1.0e-4
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  warmup_epochs: 1
+  cosine_decay: True
+  min_lr: 1.0e-7
+  lr_decay_rate: 1.0
 
 # Checkpoint output dir
 checkpoint:

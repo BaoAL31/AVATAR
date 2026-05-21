@@ -1,0 +1,21 @@
+# Diarization evaluation config for AVA-AVD test split.
+#
+# All paths are relative to the repository root unless absolute.
+
+avaavd_root: /mnt/d/AVA-AVD/dataset   # contains videos/, rttms/, split/
+avaavd_repo: /mnt/d/AVA-AVD           # local clone of zcxu-eric/AVA-AVD (download.py source)
+split: test                        # split file: <avaavd_root>/split/<split>.list
+
+# Stage 1 outputs (clip slicing + shifted GT)
+out_root: data/eval                # writes clips/, rttms_clip/
+
+# Stage 2 outputs (inference)
+work_dir: data/eval/work           # Pipeline per-clip working directory
+hyp_dir:  data/eval/hyp_rttm       # one <clip_id>.rttm per clip
+skip_existing: true
+visualize: false
+
+# Stage 3 (scoring)
+collar: 0.25                       # seconds, applied each side of every boundary
+report_dir: reports/eval           # writes diarization_results.{md,json}
+report_title: "AVA-AVD Diarization Evaluation"

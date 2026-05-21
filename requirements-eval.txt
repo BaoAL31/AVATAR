@@ -1,0 +1,12 @@
+# Dependencies for the diarization evaluation harness
+# (src/evaluation/*, scripts/eval_diarization.py)
+#
+# Install with:
+#   pip install -r requirements-eval.txt
+# or:
+#   pip install -e .[eval]
+
+pyannote.metrics>=3.2
+pyannote.core>=4.5
+pyannote.database>=4.1
+PyYAML>=6.0

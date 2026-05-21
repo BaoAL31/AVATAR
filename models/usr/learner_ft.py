@@ -150,6 +150,15 @@ class SSLLearner(LightningModule):
                     "Warning: model.backbone.use_au=True but data.au.enabled is not True — "
                     "batches without 'au' will use zeros for AU fusion."
                 )
+            
+            # Zero-initialise au_fusion to start with no AU contribution
+            if hasattr(self.model.encoder, "au_fusion"):
+                for module in self.model.encoder.au_fusion.modules():
+                    if isinstance(module, torch.nn.Linear):
+                        torch.nn.init.zeros_(module.weight)
+                        if module.bias is not None:
+                            torch.nn.init.zeros_(module.bias)
+                print("AU fusion layer initialised to zeros.")
 
         if cfg.compile_model:
             self.model = torch.compile(self.model)

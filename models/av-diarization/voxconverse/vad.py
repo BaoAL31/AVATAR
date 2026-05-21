@@ -97,7 +97,8 @@ class Vad:
         model, _ = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', verbose=False)
         model.to(self.device)
 
-        wav, sr = torchaudio.load(filename, backend='soundfile')
+        # `backend` kwarg is not available in older torchaudio builds.
+        wav, sr = torchaudio.load(filename)
 
         if wav.size(0) > 1:
             wav = wav.mean(dim=0, keepdim=True)
@@ -108,7 +109,17 @@ class Vad:
             sr = self.sampling_rate
 
         wav = wav.squeeze(0).to(device)
-        speech_timestamps = get_speech_timestamps(wav, model, return_seconds=True)
+        # Silero defaults: threshold=0.5, min_speech_duration_ms=250.
+        # Override via env vars when tuning VAD aggressiveness for evaluation.
+        vad_threshold = float(os.environ.get("AVATAR_SILERO_THRESHOLD", "0.5"))
+        min_speech_ms = int(os.environ.get("AVATAR_SILERO_MIN_SPEECH_MS", "250"))
+        speech_timestamps = get_speech_timestamps(
+            wav,
+            model,
+            return_seconds=True,
+            threshold=vad_threshold,
+            min_speech_duration_ms=min_speech_ms,
+        )
 
         segs = []
         for seg in speech_timestamps:

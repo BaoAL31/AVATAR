@@ -1,9 +1,21 @@
-from voxconverse.avdiarizer import AVDiarizer
 import os
+import sys
 import argparse
-import torch
 import pickle
 import json
+from pathlib import Path
+
+import torch
+
+# `voxconverse` is vendored under <repo>/models/av-diarization/voxconverse/.
+# Ensure that directory is on sys.path before importing AVDiarizer so the
+# pipeline works regardless of where it is launched from.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_AVDIAR_DIR = _REPO_ROOT / "models" / "av-diarization"
+if str(_AVDIAR_DIR) not in sys.path:
+    sys.path.insert(0, str(_AVDIAR_DIR))
+
+from voxconverse.avdiarizer import AVDiarizer  # noqa: E402
 
 
 class Diarizer:
@@ -57,6 +69,19 @@ class Diarizer:
 
         for start, end, speaker in segments:
             if speaker == "unknown":
+                # Fallback: map unknown RTTM segment to best-overlap visual track.
+                # This keeps downstream mouth-crop + USR path runnable when diarizer
+                # cannot assign speaker identity but still detects voiced intervals.
+                best_track = self._find_best_track(start, end, tracks)
+                if best_track is None:
+                    continue
+                cluster_id = int(faceidx[best_track]) if best_track < len(faceidx) else -1
+                result.append({
+                    "track_idx": best_track,
+                    "start":     start,
+                    "end":       end,
+                    "speaker":   f"ID_{cluster_id}" if cluster_id >= 0 else "ID_unknown"
+                })
                 continue
             try:
                 face_cluster_ids = [int(x) for x in speaker.replace("ID_", "").split("/")]

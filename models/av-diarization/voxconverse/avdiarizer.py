@@ -7,7 +7,7 @@ import tempfile
 import argparse
 import pickle
 
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .preprocessor import Preprocessor
 from .syncnet import SyncNet
@@ -29,7 +29,8 @@ class AVDiarizer():
             out_dir: str = "output", 
             device: str = "cpu", 
             cache_dir: Optional[str] = None, 
-            visualize: bool = False):
+            visualize: bool = False,
+            diarizer_extras: Optional[Dict[str, Any]] = None):
         """
         Run the AVDiarizer
 
@@ -80,7 +81,10 @@ class AVDiarizer():
 
         # Diarizer using the results from the previous steps
         diarizer = Diarizer(cache_dir, self.args.out_dir)
-        result = diarizer.run(tracks, dists, vadres, face_ids, spkfeats, in_file)  # result contains list of [(start, end, spk)]
+        extras = diarizer_extras or {}
+        result = diarizer.run(
+            tracks, dists, vadres, face_ids, spkfeats, in_file, **extras
+        )  # result contains list of [(start, end, spk)]
 
         if visualize:
             out_file = os.path.join(out_dir, 'out.mp4')
